@@ -109,6 +109,42 @@ body {
     gap: 16px;
 }
 
+.chat-panel .controls {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.thread-select {
+    max-width: 190px;
+    min-width: 150px;
+    height: 32px;
+    background: rgba(0, 0, 0, 0.28);
+    color: var(--text-primary);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    padding: 0 8px;
+    font: inherit;
+    font-size: 0.82rem;
+    outline: none;
+}
+
+.thread-select:disabled,
+.new-chat-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.thread-select option {
+    background: var(--bg-color);
+}
+
+.new-chat-btn {
+    font-size: 1.2rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
 .context-toggle {
     display: flex;
     align-items: center;

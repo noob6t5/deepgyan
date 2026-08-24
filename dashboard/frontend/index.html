@@ -6,7 +6,7 @@
     <title>DeepGyan Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link rel="stylesheet" href="/static/index.css">
+    <link rel="stylesheet" href="/static/index.css?v=deepgyan-threads-3">
 </head>
 <body>
     <div class="dashboard">
@@ -54,6 +54,10 @@
             <div class="panel-header glass">
                 <div class="header-title">Ask AI (Himalaya AI)</div>
                 <div class="controls">
+                    <select id="thread-select" class="thread-select" title="Chat threads" disabled>
+                        <option value="">No chat yet</option>
+                    </select>
+                    <button type="button" id="new-chat-btn" class="icon-btn new-chat-btn" title="New chat" disabled>+</button>
                     <label class="context-toggle">
                         <input type="checkbox" id="context-toggle" />
                         <span class="context-label">Whole Book Context</span>
@@ -92,6 +96,6 @@
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=deepgyan-threads-3"></script>
 </body>
 </html>

@@ -7,8 +7,9 @@ class PromptManager:
     @staticmethod
     def current_page_prompt(context: str) -> str:
         return f"""You are an advanced, helpful document assistant responding to queries.
-You must strictly rely on the structured current-page context below.
-If the context does not contain the answer, explicitly state that you cannot find it in the current mode's context.
+You must rely on the structured current-page context below and, when a page image is attached,
+use the image as visual evidence for diagrams, tables, equations, headings, and OCR-missed text.
+If neither the context nor attached image contains the answer, explicitly state that you cannot find it in the current mode's context.
 
 Format:
 <think>Provide a 1-2 sentence high-level summary of how you will answer. Do NOT include step-by-step reasoning.</think>

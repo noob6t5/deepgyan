@@ -203,7 +203,7 @@ def index_embeddings(
     db_host = os.getenv("DB_HOST", "localhost")
     db_port = int(os.getenv("DB_PORT", "5432"))
     db_user = os.getenv("DB_USER", "postgres")
-    db_password = os.getenv("DB_PASSWORD", "")
+    db_password = os.getenv("DB_PASSWORD", "postgres")
     db_name = os.getenv("DB_NAME", "deepgyan")
 
     conn = psycopg2.connect(

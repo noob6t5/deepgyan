@@ -2,7 +2,9 @@ import os
 import fitz  # PyMuPDF
 import json
 import asyncio
+import base64
 import hashlib
+import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
@@ -11,18 +13,23 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import (
-    SARVAMAI_KEY,
     API_KEY_PLACEHOLDER,
+    INFERENCE_API_KEY,
+    INFERENCE_BASE_URL,
+    INFERENCE_MODEL,
+    INFERENCE_MAX_TOKENS,
+    INFERENCE_PROVIDER,
+    INFERENCE_REASONING_EFFORT,
+    INFERENCE_TEMPERATURE,
+    INFERENCE_TIMEOUT_SECONDS,
     UPLOAD_DIR,
+    DEMO_CATALOG_DIR,
+    SEED_DEMO_CATALOG,
     STATIC_DIR,
     ASSETS_DIR,
     TEMPLATES_DIR,
     PLUGIN_ARTIFACTS_DIR,
     TESSERACT_PATH,
-    SARVAM_MODEL,
-    SARVAM_MAX_TOKENS,
-    SARVAM_REASONING_EFFORT,
-    SARVAM_TEMPERATURE,
     MODEL_CONTEXT_WINDOW,
     CONTEXT_SAFETY_TOKENS,
     CONTEXT_TOKEN_CHAR_RATIO,
@@ -40,14 +47,21 @@ from .config import (
     SERVER_HOST,
     SERVER_PORT,
     SSE_MEDIA_TYPE,
-    ERR_SARVAM_NOT_CONFIGURED,
+    ERR_INFERENCE_NOT_CONFIGURED,
     ERR_NO_PDF_UPLOADED,
     ERR_NO_CONTEXT,
     PRECOMPUTE_OCR_ON_UPLOAD,
     PRECOMPUTE_EMBEDDINGS_ON_UPLOAD,
+    PRECOMPUTE_ON_SELECT,
     EMBEDDING_SOURCE_PREFIX,
     RETRIEVAL_TOP_K,
     EMBEDDING_WARMUP,
+    MULTIMODAL_PAGE_CONTEXT,
+    PAGE_IMAGE_MAX_SIDE,
+    PAGE_IMAGE_QUALITY,
+    CHAPTER_CONTEXT,
+    CHAPTER_OCR_PAGE_CHAR_ESTIMATE,
+    PAGE_IMAGE_TOKEN_ESTIMATE,
     ANIMATION_CONTEXT_MAX_CHARS,
     ANIMATION_RENDER_TIMEOUT_SECONDS,
     validate_config,
@@ -59,6 +73,8 @@ from core.services.inference import InferenceService
 from core.services.plugins import ManimVideoPlugin, PluginJobRequest, PluginRuntime
 from core.agents.context_manager import ContextManager
 from core.agents.prompt_manager import PromptManager
+from core.agents.context_manager import context_char_budget
+from core.services.ingestion.chapter_index import Chapter, chapter_for_page, detect_chapters
 
 # Setup PyTesseract
 import pytesseract
@@ -69,12 +85,16 @@ if os.path.exists(TESSERACT_PATH):
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 inference_service = InferenceService(
-    api_key=SARVAMAI_KEY,
+    api_key=INFERENCE_API_KEY,
     api_key_placeholder=API_KEY_PLACEHOLDER,
-    model=SARVAM_MODEL,
-    max_tokens=SARVAM_MAX_TOKENS,
-    temperature=SARVAM_TEMPERATURE,
-    reasoning_effort=SARVAM_REASONING_EFFORT,
+    model=INFERENCE_MODEL,
+    max_tokens=INFERENCE_MAX_TOKENS,
+    temperature=INFERENCE_TEMPERATURE,
+    reasoning_effort=INFERENCE_REASONING_EFFORT,
+    provider=INFERENCE_PROVIDER,
+    base_url=INFERENCE_BASE_URL,
+    timeout_seconds=INFERENCE_TIMEOUT_SECONDS,
+    context_window=MODEL_CONTEXT_WINDOW,
 )
 context_manager = ContextManager(
     inference_service,
@@ -105,6 +125,8 @@ global_pdf_data = {
     "filepath": None,
     "toc": [],
     "pages": {},
+    "page_images": {},
+    "chapters": None,
     "total_pages": 0,
     "analysis": DEFAULT_ANALYSIS_MESSAGE,
     "book_id": None,
@@ -129,8 +151,57 @@ def _stream_text_chunks(text: str, size: int = 80):
         yield text[i : i + size]
 
 
-def _sarvam_params(messages: list[dict]) -> dict:
-    return inference_service.build_params(messages)
+def _page_image_enabled() -> bool:
+    """True when a page image will be attached to the next current-page call."""
+    return bool(MULTIMODAL_PAGE_CONTEXT and INFERENCE_PROVIDER == "ollama")
+
+
+def _render_page_image_base64(page_index: int) -> str | None:
+    """Render one selected PDF page as a compact JPEG for VLM context."""
+    filepath = global_pdf_data.get("filepath")
+    total_pages = int(global_pdf_data.get("total_pages") or 0)
+    if not filepath or page_index < 0 or page_index >= total_pages:
+        return None
+
+    cache_key = f"{page_index}:{PAGE_IMAGE_MAX_SIDE}:{PAGE_IMAGE_QUALITY}"
+    cache = global_pdf_data.setdefault("page_images", {})
+    if cache_key in cache:
+        return cache[cache_key]
+
+    doc = fitz.open(filepath)
+    try:
+        page = doc[page_index]
+        longest_side = max(float(page.rect.width), float(page.rect.height), 1.0)
+        zoom = max(0.5, PAGE_IMAGE_MAX_SIDE / longest_side)
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        image = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+        resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+        image.thumbnail((PAGE_IMAGE_MAX_SIDE, PAGE_IMAGE_MAX_SIDE), resampling)
+        buffer = io.BytesIO()
+        quality = max(35, min(95, PAGE_IMAGE_QUALITY))
+        image.save(buffer, format="JPEG", quality=quality, optimize=True)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        cache[cache_key] = encoded
+        return encoded
+    except Exception as exc:
+        logger.warning("Failed to render page image for multimodal context: %s", exc)
+        return None
+    finally:
+        doc.close()
+
+
+def _build_user_message(query: str, page_image_base64: str | None = None) -> dict[str, Any]:
+    content = f"Question: {query}"
+    if page_image_base64:
+        content = (
+            "The current textbook page image is attached. Use it alongside the OCR/context "
+            "to read diagrams, tables, equations, headings, and OCR-missed text.\n\n"
+            f"Question: {query}"
+        )
+    message: dict[str, Any] = {"role": "user", "content": content}
+    if page_image_base64:
+        message["images"] = [page_image_base64]
+    return message
 
 
 def _db_connect():
@@ -181,6 +252,64 @@ def _upsert_book(filename: str, file_hash: str, total_pages: int) -> Optional[st
                 return str(row[0]) if row else None
     finally:
         conn.close()
+
+
+def _load_demo_catalog_manifest(catalog_dir: Path) -> list[dict[str, Any]]:
+    manifest_path = catalog_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            books = manifest.get("books", [])
+            if isinstance(books, list):
+                return [book for book in books if isinstance(book, dict)]
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to read demo catalogue manifest: %s", exc)
+
+    return [{"filename": pdf.name} for pdf in sorted(catalog_dir.glob("*.pdf"))]
+
+
+def _seed_demo_catalog_books() -> int:
+    """Copy repo-owned demo PDFs into uploads and register them in the book catalogue."""
+    if not SEED_DEMO_CATALOG:
+        return 0
+
+    catalog_dir = Path(DEMO_CATALOG_DIR)
+    if not catalog_dir.exists():
+        return 0
+
+    seeded = 0
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    for entry in _load_demo_catalog_manifest(catalog_dir):
+        filename = str(entry.get("filename") or "").strip()
+        if not filename:
+            continue
+        source_path = (catalog_dir / filename).resolve()
+        if not source_path.exists() or source_path.suffix.lower() != ".pdf":
+            logger.warning("Demo catalogue PDF missing: %s", source_path)
+            continue
+
+        destination_path = Path(UPLOAD_DIR) / source_path.name
+        source_bytes = source_path.read_bytes()
+        file_hash = hashlib.sha256(source_bytes).hexdigest()
+        if not destination_path.exists() or hashlib.sha256(
+            destination_path.read_bytes()
+        ).hexdigest() != file_hash:
+            shutil.copy2(source_path, destination_path)
+
+        try:
+            doc = fitz.open(str(destination_path))
+            total_pages = len(doc)
+            doc.close()
+        except Exception as exc:
+            logger.warning("Failed to inspect demo catalogue PDF %s: %s", filename, exc)
+            continue
+
+        if _upsert_book(source_path.name, file_hash, total_pages):
+            seeded += 1
+
+    if seeded:
+        logger.info("Seeded %s demo catalogue book(s) from %s", seeded, catalog_dir)
+    return seeded
 
 
 def _load_ocr_page(book_id: str, page_index: int) -> Optional[str]:
@@ -283,6 +412,45 @@ def _get_book_by_id(book_id: str) -> Optional[dict]:
                 return {"id": str(row[0]), "filename": row[1], "total_pages": row[2]}
     finally:
         conn.close()
+
+
+def _embedding_source_for_book(book_id: str | None, filename: str | None = None) -> str | None:
+    source_value = book_id or filename
+    if not source_value:
+        return None
+    return f"{EMBEDDING_SOURCE_PREFIX}:{source_value}"
+
+
+def _count_text_chunks(source: str) -> int:
+    try:
+        conn = _db_connect()
+    except Exception as exc:
+        logger.warning(f"DB connect failed for text chunk lookup: {exc}")
+        return 0
+
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM text_chunks WHERE source = %s",
+                    (source,),
+                )
+                row = cur.fetchone()
+                return int(row[0] or 0) if row else 0
+    finally:
+        conn.close()
+
+
+def _selected_book_needs_precompute(book: dict) -> bool:
+    if not PRECOMPUTE_ON_SELECT or global_pdf_data["precompute"].get("running"):
+        return False
+    if not PRECOMPUTE_OCR_ON_UPLOAD:
+        return False
+    if not PRECOMPUTE_EMBEDDINGS_ON_UPLOAD:
+        return True
+
+    source = _embedding_source_for_book(book.get("id"), book.get("filename"))
+    return bool(source and _count_text_chunks(source) == 0)
 
 
 def _create_plugin_job(
@@ -521,8 +689,13 @@ async def _build_animation_context(query: str, mode: str, current_page: int) -> 
         merged = "\n\n".join(sections).strip()
         return _truncate_animation_context(merged or local_raw)
 
-    preferred = local_structured.strip() if local_structured.strip() else local_raw
-    return _truncate_animation_context(preferred)
+    sections = []
+    if local_raw.strip():
+        sections.append(f"=== Exact Current Page Text (+/- {CONTEXT_WINDOW}) ===\n{local_raw.strip()}")
+    if local_structured.strip():
+        sections.append(f"=== Optional Structured Summary ===\n{local_structured.strip()}")
+    merged = "\n\n".join(sections).strip()
+    return _truncate_animation_context(merged or local_raw)
 
 
 async def _run_plugin_job(job_id: str) -> None:
@@ -573,6 +746,7 @@ async def _run_plugin_job(job_id: str) -> None:
 @app.on_event("startup")
 async def startup_event():
     validate_config()
+    _seed_demo_catalog_books()
     _mark_incomplete_plugin_jobs_interrupted()
     if EMBEDDING_WARMUP:
         async def _warmup():
@@ -621,8 +795,31 @@ async def select_book(request: Request):
     global_pdf_data["total_pages"] = book["total_pages"]
     global_pdf_data["book_id"] = book_id
     global_pdf_data["pages"] = {}
+    global_pdf_data["page_images"] = {}
+    global_pdf_data["chapters"] = None
+    global_pdf_data["precompute"] = {
+        "running": False,
+        "current_page": 0,
+        "total_pages": book["total_pages"],
+        "embeddings_done": _count_text_chunks(
+            _embedding_source_for_book(book_id, book["filename"]) or ""
+        )
+        > 0,
+    }
 
-    return JSONResponse(content={"status": "ok", "book": book})
+    precompute_started = False
+    if _selected_book_needs_precompute(book):
+        logger.info("Starting OCR/embedding precompute for selected book %s", book["filename"])
+        precompute_started = True
+        asyncio.create_task(_precompute_ocr_and_embeddings())
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "book": book,
+            "precompute_started": precompute_started,
+        }
+    )
 
 
 @app.post("/api/plugins/jobs")
@@ -654,6 +851,8 @@ async def create_plugin_job(request: Request):
                 global_pdf_data["total_pages"] = book["total_pages"]
                 global_pdf_data["book_id"] = book_id
                 global_pdf_data["pages"] = {}
+                global_pdf_data["page_images"] = {}
+                global_pdf_data["chapters"] = None
     if global_pdf_data["total_pages"] == 0:
         raise HTTPException(status_code=400, detail=ERR_NO_PDF_UPLOADED)
 
@@ -750,6 +949,8 @@ async def upload_pdf(file: UploadFile = File(...)):
             "filepath": file_path,
             "toc": toc,
             "pages": {},
+            "page_images": {},
+            "chapters": None,
             "total_pages": total_pages,
             "analysis": DEFAULT_ANALYSIS_MESSAGE,
             "book_id": book_id,
@@ -827,14 +1028,134 @@ async def extract_page_async(page_index: int) -> str:
     """Run the synchronous extraction in a thread pool to avoid blocking FastAPI"""
     return await asyncio.to_thread(extract_page_sync, page_index)
 
+def _chapter_index() -> list[Chapter]:
+    """Chapter ranges for the loaded book, detected once and cached."""
+    cached = global_pdf_data.get("chapters")
+    if cached is not None:
+        return cached
+
+    chapters: list[Chapter] = []
+    filepath = global_pdf_data.get("filepath")
+    if filepath and os.path.exists(filepath):
+        try:
+            doc = fitz.open(filepath)
+            try:
+                chapters = detect_chapters(doc)
+            finally:
+                doc.close()
+        except Exception as exc:
+            logger.warning("Chapter detection failed for %s: %s", filepath, exc)
+            chapters = []
+
+    global_pdf_data["chapters"] = chapters
+    return chapters
+
+
+def _estimate_range_chars(start_page: int, end_page: int) -> int:
+    """Estimate the text size of a page range without triggering OCR.
+
+    Cached OCR text is authoritative; otherwise the PDF's native text is a
+    free lower bound, and a page with neither is assumed to be an OCR-only
+    scan worth CHAPTER_OCR_PAGE_CHAR_ESTIMATE chars.
+    """
+    pages = global_pdf_data.get("pages") or {}
+    total = 0
+    unknown: list[int] = []
+    for page_index in range(start_page, end_page + 1):
+        cached = pages.get(page_index)
+        if cached:
+            total += len(cached)
+        else:
+            unknown.append(page_index)
+
+    if not unknown:
+        return total
+
+    filepath = global_pdf_data.get("filepath")
+    if not filepath or not os.path.exists(filepath):
+        return total + len(unknown) * CHAPTER_OCR_PAGE_CHAR_ESTIMATE
+
+    try:
+        doc = fitz.open(filepath)
+        try:
+            for page_index in unknown:
+                if 0 <= page_index < len(doc):
+                    native = len(doc[page_index].get_text().strip())
+                    total += native or CHAPTER_OCR_PAGE_CHAR_ESTIMATE
+        finally:
+            doc.close()
+    except Exception as exc:
+        logger.warning("Could not estimate chapter size: %s", exc)
+        return total + len(unknown) * CHAPTER_OCR_PAGE_CHAR_ESTIMATE
+
+    return total
+
+
+def _select_context_range(
+    center_page: int,
+    window: int,
+    total_pages: int,
+    *,
+    allow_chapter: bool = True,
+) -> tuple[int, int, Chapter | None]:
+    """Pick the page range to send as current-page context.
+
+    Prefers the whole chapter containing `center_page` when it fits the model
+    window; otherwise falls back to the +/- `window` slice, clamped to the
+    chapter so context never bleeds into a neighbouring topic.
+    """
+    fallback_start = max(0, center_page - window)
+    fallback_end = min(total_pages - 1, center_page + window)
+
+    if not (allow_chapter and CHAPTER_CONTEXT):
+        return fallback_start, fallback_end, None
+
+    chapter = chapter_for_page(_chapter_index(), center_page)
+    if chapter is None:
+        return fallback_start, fallback_end, None
+
+    reserved = PAGE_IMAGE_TOKEN_ESTIMATE if _page_image_enabled() else 0
+    budget = context_char_budget(
+        model_context_window=MODEL_CONTEXT_WINDOW,
+        safety_tokens=CONTEXT_SAFETY_TOKENS,
+        token_char_ratio=CONTEXT_TOKEN_CHAR_RATIO,
+        output_tokens=INFERENCE_MAX_TOKENS,
+        reserved_tokens=reserved,
+        overhead_chars=len(PromptManager.current_page_prompt("")),
+    )
+    estimated = _estimate_range_chars(chapter.start_page, chapter.end_page)
+    if estimated <= budget:
+        logger.info(
+            "Using chapter context '%s' (pages %s-%s, ~%s chars <= %s budget)",
+            chapter.title,
+            chapter.start_page + 1,
+            chapter.end_page + 1,
+            estimated,
+            budget,
+        )
+        return chapter.start_page, chapter.end_page, chapter
+
+    logger.info(
+        "Chapter '%s' too large for the window (~%s chars > %s budget); using +/-%s pages",
+        chapter.title,
+        estimated,
+        budget,
+        window,
+    )
+    return (
+        max(fallback_start, chapter.start_page),
+        min(fallback_end, chapter.end_page),
+        None,
+    )
+
+
 async def build_context(center_page: int, window: int = CONTEXT_WINDOW) -> str:
     global global_pdf_data
     total = global_pdf_data["total_pages"]
     if total == 0:
         return ""
-    
-    start_page = max(0, center_page - window)
-    end_page = min(total - 1, center_page + window)
+
+    start_page, end_page, chapter = _select_context_range(center_page, window, total)
     
     tasks = [extract_page_async(p) for p in range(start_page, end_page + 1)]
     results = await asyncio.gather(*tasks)
@@ -844,23 +1165,69 @@ async def build_context(center_page: int, window: int = CONTEXT_WINDOW) -> str:
         p = start_page + i
         if text.strip():
             context_parts.append(f"--- Page {p + 1} ---\n{text.strip()}")
-            
-    return "\n\n".join(context_parts)
+
+    body = "\n\n".join(context_parts)
+    if chapter is not None and body:
+        return (
+            f"=== Full chapter: {chapter.title} "
+            f"(pages {chapter.start_page + 1}-{chapter.end_page + 1}) ===\n\n{body}"
+        )
+    return body
 
 
 async def _generate_structured_context(raw_text: str, label: str) -> str:
     """Convert raw OCR text into structured synthetic context."""
     if not raw_text.strip():
         return ""
-    extracted = await context_manager.build_structured_context(raw_text)
-    return extracted if extracted else API_EMPTY_RESPONSE_MESSAGE
+    try:
+        extracted = await context_manager.build_structured_context(raw_text)
+        if _is_usable_structured_context(extracted):
+            return extracted
+        logger.warning(
+            "Structured context generation returned unusable output for %s; using raw extracted text.",
+            label,
+        )
+        return raw_text
+    except Exception as exc:
+        logger.warning(
+            "Structured context generation failed for %s; using raw extracted text: %s",
+            label,
+            exc,
+        )
+        return raw_text
+
+
+def _is_usable_structured_context(text: str) -> bool:
+    cleaned = text.strip()
+    if len(cleaned) < 40:
+        return False
+    lowered = cleaned.lower()
+    prompt_fragments = (
+        "provide the final answer only",
+        "do not include step-by-step reasoning",
+        "raw ocr document text",
+        "structured current-page context",
+        "<final>",
+        "</final>",
+    )
+    return not any(fragment in lowered for fragment in prompt_fragments)
 
 
 async def _build_env_context(current_page: int) -> tuple[str, str]:
-    """Build raw +/- window context and paraphrased structured context."""
+    """Build the current-page context, and a paraphrase of it when useful.
+
+    When whole-chapter context is in play the extracted text is already the
+    authoritative source for the topic; paraphrasing it would cost an extra
+    inference call and pass through a 12k-char truncation, so the raw chapter
+    is returned as-is and the caller uses it directly.
+    """
+    total = global_pdf_data["total_pages"]
+    _start, _end, chapter = _select_context_range(current_page, CONTEXT_WINDOW, total)
     extracted_text = await build_context(current_page, window=CONTEXT_WINDOW)
     if not extracted_text.strip():
         return "", ""
+    if chapter is not None:
+        return "", extracted_text
     structured = await _generate_structured_context(extracted_text, label="current_page_window")
     return structured, extracted_text
 
@@ -893,33 +1260,21 @@ async def _precompute_ocr_and_embeddings():
                 global_pdf_data["precompute"]["current_page"],
                 total,
             )
-<<<<<<< Updated upstream
-=======
-            chunks = chunk_text(all_text)
-            embedder = EmbeddingService()
-            try:
-                logger.info("Embedding precompute started (%s chunks)", len(chunks))
-                embeddings = await embedder.get_embeddings(chunks)
-                source_value = global_pdf_data.get("book_id") or global_pdf_data["filename"]
-                source = f"{EMBEDDING_SOURCE_PREFIX}:{source_value}"
-                index_embeddings(chunks, embeddings, source=source)
-                global_pdf_data["precompute"]["embeddings_done"] = True
-                logger.info("Embedding precompute finished")
-            except Exception as exc:
-                logger.warning("Embedding precompute failed: %s", exc)
->>>>>>> Stashed changes
 
     if PRECOMPUTE_EMBEDDINGS_ON_UPLOAD:
         all_text = "\n\n".join(
             [global_pdf_data["pages"].get(i, "") for i in range(total)]
         )
-        chunks = _chunk_text(all_text)
+        chunks = chunk_text(all_text)
         embedder = EmbeddingService()
         try:
             logger.info("Embedding precompute started (%s chunks)", len(chunks))
             embeddings = await embedder.get_embeddings(chunks)
-            source_value = global_pdf_data.get("book_id") or global_pdf_data["filename"]
-            source = f"{EMBEDDING_SOURCE_PREFIX}:{source_value}"
+            source = _embedding_source_for_book(
+                global_pdf_data.get("book_id"), global_pdf_data.get("filename")
+            )
+            if not source:
+                raise RuntimeError("Missing embedding source for current book")
             index_embeddings(chunks, embeddings, source=source)
             global_pdf_data["precompute"]["embeddings_done"] = True
             logger.info("Embedding precompute finished")
@@ -932,20 +1287,19 @@ async def _precompute_ocr_and_embeddings():
 
 async def _retrieve_relevant_chunks(query: str, top_k: int) -> list[str]:
     embedder = EmbeddingService()
-    source = None
-    if global_pdf_data.get("book_id") or global_pdf_data.get("filename"):
-        source_value = global_pdf_data.get("book_id") or global_pdf_data.get("filename")
-        source = f"{EMBEDDING_SOURCE_PREFIX}:{source_value}"
+    source = _embedding_source_for_book(
+        global_pdf_data.get("book_id"), global_pdf_data.get("filename")
+    )
     return await embedder.get_relevant_chunks(query, top_k=top_k, source=source)
 
 @app.post("/api/analyze_env")
 async def analyze_env(request: Request):
     """
     Runs an analysis over the local environment (+/- 5 pages),
-    and asks Sarvam to create a high-level summary of this section.
+    and asks the configured inference provider to create a high-level summary of this section.
     """
     if not inference_service.is_configured():
-        raise HTTPException(status_code=503, detail=ERR_SARVAM_NOT_CONFIGURED)
+        raise HTTPException(status_code=503, detail=ERR_INFERENCE_NOT_CONFIGURED)
         
     data = await request.json()
     current_page = data.get("current_page", 1) - 1 # 0-indexed
@@ -972,10 +1326,10 @@ async def analyze_env(request: Request):
 async def analyze_global():
     """
     Runs an analysis over the ENTIRE PDF using concurrent OCR,
-    and then asks Sarvam AI for synthetic data conversion into context.txt.
+    and then asks the configured inference provider for synthetic data conversion into context.txt.
     """
     if not inference_service.is_configured():
-        raise HTTPException(status_code=503, detail=ERR_SARVAM_NOT_CONFIGURED)
+        raise HTTPException(status_code=503, detail=ERR_INFERENCE_NOT_CONFIGURED)
 
     global global_pdf_data
     total = global_pdf_data["total_pages"]
@@ -1046,12 +1400,14 @@ async def ask_question(request: Request):
                     global_pdf_data["total_pages"] = book["total_pages"]
                     global_pdf_data["book_id"] = book_id
                     global_pdf_data["pages"] = {}
+                    global_pdf_data["chapters"] = None
+                    global_pdf_data["page_images"] = {}
         if global_pdf_data["total_pages"] == 0:
             raise HTTPException(status_code=400, detail=ERR_NO_PDF_UPLOADED)
 
     if not inference_service.is_configured():
         async def stream_error():
-            yield f"data: {json.dumps({'error': ERR_SARVAM_NOT_CONFIGURED})}\n\n"
+            yield f"data: {json.dumps({'error': ERR_INFERENCE_NOT_CONFIGURED})}\n\n"
             yield "event: end\ndata: {}\n\n"
         return StreamingResponse(stream_error(), media_type=SSE_MEDIA_TYPE)
 
@@ -1088,12 +1444,19 @@ async def ask_question(request: Request):
         else:
             file_context = raw_context.strip() if raw_context.strip() else "No text found for the current page window."
     
+    page_image_base64 = None
+
     if mode == "analyze":
         system_prompt = PromptManager.whole_book_prompt(file_context)
     else:
         system_prompt = PromptManager.current_page_prompt(file_context)
+        if _page_image_enabled():
+            page_image_base64 = await asyncio.to_thread(
+                _render_page_image_base64,
+                current_page,
+            )
 
-    user_prompt = f"Question: {query}"
+    user_message = _build_user_message(query, page_image_base64)
 
     async def single_chunk_response():
         try:
@@ -1101,7 +1464,7 @@ async def ask_question(request: Request):
                 inference_service.chat_completions,
                 [
                     {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': user_prompt}
+                    user_message,
                 ],
             )
             content, reasoning = _extract_response_payload(response)
@@ -1132,4 +1495,21 @@ async def ask_question(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("dashboard.backend.app:app", host=SERVER_HOST, port=SERVER_PORT, reload=True)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    uvicorn.run(
+        "dashboard.backend.app:app",
+        host=SERVER_HOST,
+        port=SERVER_PORT,
+        reload=True,
+        reload_dirs=[
+            str(repo_root / "core"),
+            str(repo_root / "dashboard" / "backend"),
+            str(repo_root / "dashboard" / "frontend"),
+        ],
+        reload_excludes=[
+            "dashboard/data/*",
+            "dashboard/uploads/*",
+            "pdfs/*",
+        ],
+    )

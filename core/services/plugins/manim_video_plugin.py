@@ -170,8 +170,58 @@ class ManimVideoPlugin:
         expr = re.sub(r"\s+", " ", expr).strip()
         return expr or "Use the core formula from the lesson."
 
-    def _fallback_formula(self, query: str, context_text: str) -> str:
+    @staticmethod
+    def _matches_any(scope: str, terms: tuple[str, ...]) -> bool:
+        return any(term in scope for term in terms)
+
+    def _teaching_pattern(self, query: str, context_text: str) -> str:
         scope = f"{query} {context_text}".lower()
+        if self._matches_any(
+            scope,
+            (
+                "linear programming",
+                "linear programme",
+                "optimization",
+                "optimisation",
+                "maximize",
+                "maximise",
+                "minimize",
+                "minimise",
+                "objective function",
+                "constraint",
+                "linear inequalities",
+                "feasible region",
+                "रेखीय योजना",
+            ),
+        ):
+            return "optimization"
+        if self._matches_any(scope, ("throughput", "bandwidth", "rate", "per second", "capacity")):
+            return "rate"
+        if self._matches_any(scope, ("conditional identit", "condition identity", "identity", "lhs", "r.h.s", "l.h.s")):
+            return "identity"
+        if self._matches_any(scope, ("remainder theorem", "factor", "factorise", "factorize", "root", "zero", "polynomial")):
+            return "algebra_roots"
+        if self._matches_any(scope, ("triangle", "circle", "sphere", "area", "volume", "pythag")):
+            return "geometry_measure"
+        return "concept"
+
+    def _fallback_formula(self, query: str, context_text: str) -> str:
+        pattern = self._teaching_pattern(query, context_text)
+        scope = f"{query} {context_text}".lower()
+        if pattern == "rate" and "throughput" in scope:
+            return "Throughput = data successfully transferred / time"
+        if pattern == "rate" and "bandwidth" in scope:
+            return "Bandwidth = maximum data capacity of a network link"
+        if pattern == "rate":
+            return "Rate = amount changed / time"
+        if pattern == "identity":
+            return "A + B = 90° भए tan A = cot B"
+        if pattern == "optimization":
+            return "Max/Min Z = ax + by, subject to linear constraints"
+        if pattern == "algebra_roots" and "remainder theorem" in scope:
+            return "p(x) लाई (x - a) ले भाग गर्दा remainder = p(a)"
+        if pattern == "algebra_roots":
+            return "Polynomial: ax^n + ... + c, जहाँ n whole number हो"
         if "scalene" in scope and "area" in scope:
             return r"A = \frac{1}{2} b h"
         if "area" in scope and "triangle" in scope:
@@ -182,37 +232,130 @@ class ManimVideoPlugin:
             return r"c^2 = a^2 + b^2"
         if "simple interest" in scope or "interest" in scope:
             return r"I = P r t"
-        return "Write the key formula first, then substitute values step by step."
+        return "Define the key relationship, then apply it step by step."
+
+    def _pattern_fallback_plan(self, query: str, context_text: str) -> dict[str, object] | None:
+        pattern = self._teaching_pattern(query, context_text)
+        formula = self._fallback_formula(query, context_text)
+
+        if pattern == "rate":
+            return {
+                "title": "Rate and Capacity",
+                "learning_goal": "Explain how an amount changes or moves over time, and compare expected capacity with actual rate.",
+                "formula_latex": formula,
+                "steps": [
+                    "Identify the quantity being measured and the time interval.",
+                    "Separate maximum capacity from the amount that actually succeeds.",
+                    "Divide successful amount by time to get the real rate.",
+                    "Use units like per second to compare different situations.",
+                ],
+                "worked_example": [
+                    "If 20 units arrive successfully in 2 seconds, measure the real delivery rate.",
+                    "Rate = 20 units / 2 seconds.",
+                    "Rate = 10 units per second, so the actual delivery is 10 each second.",
+                ],
+                "visual_focus": "network",
+                "answer_line": "Rate compares a successful amount with the time it takes.",
+            }
+
+        if pattern == "identity":
+            return {
+                "title": "Conditional Relationship",
+                "learning_goal": "Understand when two expressions become equal under a stated condition.",
+                "formula_latex": formula,
+                "steps": [
+                    "Write the condition that must be true first.",
+                    "Place the left-hand side and right-hand side side by side.",
+                    "Substitute a simple value pair that satisfies the condition.",
+                    "Check whether both sides match under that condition.",
+                ],
+                "worked_example": [
+                    "Choose values that satisfy the condition.",
+                    "Evaluate the left side and the right side separately.",
+                    "If both sides match, the relationship holds for that condition.",
+                ],
+                "visual_focus": "identity",
+                "answer_line": "A conditional relationship is true only when its condition is satisfied.",
+            }
+
+        if pattern == "optimization":
+            return {
+                "title": "Optimization With Constraints",
+                "learning_goal": "Model choices with constraints and choose the best feasible option.",
+                "formula_latex": formula,
+                "steps": [
+                    "Choose decision variables such as x and y for the two quantities.",
+                    "Write the target expression that should be maximized or minimized.",
+                    "Translate every limit or condition into a constraint.",
+                    "Represent the feasible choices and identify boundary points.",
+                    "Evaluate the target expression at candidate points and select the best one.",
+                ],
+                "worked_example": [
+                    "Maximize Z = 3x + 2y with x + y <= 6, x <= 4, y <= 3.",
+                    "The feasible corner points include (0,0), (4,0), (4,2), (3,3), and (0,3).",
+                    "Z values are 0, 12, 16, 15, and 6 respectively.",
+                    "The maximum is Z = 16 at the corner point (4,2).",
+                ],
+                "visual_focus": "optimization",
+                "answer_line": "Constraint-based optimization compares feasible candidates and chooses the best value.",
+            }
+
+        if pattern == "algebra_roots":
+            return {
+                "title": "Algebraic Structure",
+                "learning_goal": "Use roots, factors, or substitution to understand an algebraic expression.",
+                "formula_latex": formula,
+                "steps": [
+                    "Identify the expression and the value or factor being tested.",
+                    "Connect a factor, root, or divisor to a substitution value.",
+                    "Substitute carefully and simplify the expression.",
+                    "Interpret zero, remainder, or factor result from the simplified value.",
+                ],
+                "worked_example": [
+                    "If the divisor is x - 2, then a = 2.",
+                    "For p(x), calculate p(2).",
+                    "If p(2) = 0, then x - 2 is a factor; otherwise p(2) is the remainder.",
+                ],
+                "visual_focus": "algebra",
+                "answer_line": "Algebraic structure becomes clearer when factors and substitutions are connected.",
+            }
+
+        return None
 
     def _fallback_plan(self, query: str, context_text: str) -> dict[str, object]:
+        pattern_plan = self._pattern_fallback_plan(query, context_text)
+        if pattern_plan:
+            return pattern_plan
+
         scope = f"{query} {context_text}".lower()
         visual_focus = "generic"
-        if "triangle" in scope:
+        pattern = self._teaching_pattern(query, context_text)
+        if pattern == "geometry_measure" and "triangle" in scope:
             visual_focus = "triangle"
-        elif "circle" in scope or "sphere" in scope:
+        elif pattern == "geometry_measure" and ("circle" in scope or "sphere" in scope):
             visual_focus = "circle"
-        elif "equation" in scope or "algebra" in scope:
+        elif pattern == "algebra_roots" or "equation" in scope or "algebra" in scope:
             visual_focus = "algebra"
 
         formula_latex = self._fallback_formula(query, context_text)
         query_line = self._clip(query, 78)
         return {
-            "title": "Step-by-step concept walkthrough",
-            "learning_goal": f"Solve: {query_line}",
+            "title": "Concept Walkthrough",
+            "learning_goal": f"Explain: {query_line}",
             "formula_latex": formula_latex,
             "steps": [
-                "Identify the known values and what must be found.",
-                "Write the core formula clearly before calculation.",
-                "Substitute values carefully and simplify line by line.",
-                "Check units and verify the final answer is reasonable.",
+                "Identify the main concept and the question being asked.",
+                "Name the important relationship or rule in simple words.",
+                "Connect each part of the rule to the textbook context.",
+                "Use a short example to check that the idea makes sense.",
             ],
             "worked_example": [
-                "Given values from the question.",
-                f"Use formula: {self._latex_to_text(formula_latex)}",
-                "Compute each step and present the final result clearly.",
+                "Start with the core idea from the question.",
+                f"Use the relationship: {self._latex_to_text(formula_latex)}",
+                "Explain the result in one clear sentence.",
             ],
             "visual_focus": visual_focus,
-            "answer_line": "The answer follows from applying the formula step by step.",
+            "answer_line": "The answer follows from connecting the concept to a clear example.",
         }
 
     def _normalize_plan(
@@ -243,7 +386,7 @@ class ManimVideoPlugin:
                 plan[field] = cleaned[:6] if field == "steps" else cleaned[:5]
 
         visual = str(plan.get("visual_focus", "generic")).strip().lower()
-        if visual not in {"triangle", "circle", "algebra", "generic"}:
+        if visual not in {"triangle", "circle", "algebra", "identity", "network", "optimization", "generic"}:
             visual = "generic"
         plan["visual_focus"] = visual
 
@@ -256,6 +399,39 @@ class ManimVideoPlugin:
         if not plan["worked_example"]:
             plan["worked_example"] = base["worked_example"]
         return plan
+
+    @staticmethod
+    def _plan_looks_specific(plan: dict[str, object], query: str) -> bool:
+        query_terms = {
+            term
+            for term in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{3,}", query.lower())
+            if term not in {"explain", "show", "steps", "with", "what", "does", "mean"}
+        }
+        fields: list[str] = [
+            str(plan.get("title", "")),
+            str(plan.get("learning_goal", "")),
+            str(plan.get("formula_latex", "")),
+            str(plan.get("answer_line", "")),
+        ]
+        fields.extend(str(item) for item in (plan.get("steps") or []))
+        fields.extend(str(item) for item in (plan.get("worked_example") or []))
+        combined = " ".join(fields).lower()
+
+        placeholder_fragments = (
+            "write the key formula",
+            "given values from the question",
+            "compute each step",
+            "step-by-step concept walkthrough",
+            "answer follows from applying the formula",
+            "define the key relationship",
+            "concept walkthrough",
+            "answer follows from connecting the concept",
+        )
+        if any(fragment in combined for fragment in placeholder_fragments):
+            return False
+        if query_terms and not any(term in combined for term in query_terms):
+            return False
+        return True
 
     def _generate_plan(self, query: str, context_text: str) -> tuple[dict[str, object], str]:
         if not self._inference.is_configured():
@@ -270,7 +446,10 @@ class ManimVideoPlugin:
             )
             content, _reasoning = self._inference.extract_response_payload(response)
             parsed = self._extract_json_object(content)
-            return self._normalize_plan(parsed, query, context_text), "llm_plan"
+            plan = self._normalize_plan(parsed, query, context_text)
+            if self._plan_looks_specific(plan, query):
+                return plan, "llm_plan"
+            return self._fallback_plan(query, context_text), "plan_quality_fallback"
         except Exception:
             return self._fallback_plan(query, context_text), "plan_fallback"
 
@@ -342,9 +521,9 @@ class ManimVideoPlugin:
             "    def construct(self):",
             "        self.camera.background_color = '#0D1326'",
             "",
-            f"        title = Text({repr(title)}, font_size=46, color=BLUE_B)",
-            f"        goal = Text({repr(learning_goal)}, font_size=30).scale_to_fit_width(12.5)",
-            f"        formula = Text({repr(formula_text)}, font_size=34, color=GREEN_B).scale_to_fit_width(12.5)",
+            f"        title = Text({repr(title)}, font_size=40, color=BLUE_B)",
+            f"        goal = Text({repr(learning_goal)}, font_size=21).scale_to_fit_width(11.2)",
+            f"        formula = Text({repr(formula_text)}, font_size=23, color=GREEN_B).scale_to_fit_width(5.8)",
             "        title.to_edge(UP, buff=0.45)",
             "        goal.next_to(title, DOWN, buff=0.35)",
             "",
@@ -382,6 +561,50 @@ class ManimVideoPlugin:
                     "        visual_group = VGroup(x_box, eq_hint)",
                 ]
             )
+        elif visual_focus == "identity":
+            lines.extend(
+                [
+                    "        lhs_box = RoundedRectangle(corner_radius=0.16, width=1.65, height=0.85, color=BLUE_B)",
+                    "        rhs_box = RoundedRectangle(corner_radius=0.16, width=1.65, height=0.85, color=GREEN_B).shift(RIGHT * 4.2)",
+                    "        lhs_label = Text('L.H.S.', font_size=22, color=BLUE_B).move_to(lhs_box)",
+                    "        rhs_label = Text('R.H.S.', font_size=22, color=GREEN_B).move_to(rhs_box)",
+                    "        condition = Text('condition: A + B = 90°', font_size=20, color=YELLOW).move_to(RIGHT * 2.1 + UP * 0.75)",
+                    "        equals = Arrow(lhs_box.get_right(), rhs_box.get_left(), color=YELLOW, buff=0.18)",
+                    "        check = Text('check equality', font_size=20, color=YELLOW).next_to(equals, DOWN, buff=0.2)",
+                    "        visual_group = VGroup(lhs_box, rhs_box, lhs_label, rhs_label, condition, equals, check)",
+                ]
+            )
+        elif visual_focus == "network":
+            lines.extend(
+                [
+                    "        sender = RoundedRectangle(corner_radius=0.18, width=1.9, height=1.0, color=BLUE_B)",
+                    "        receiver = RoundedRectangle(corner_radius=0.18, width=1.9, height=1.0, color=GREEN_B).shift(RIGHT * 4.6)",
+                    "        sender_label = Text('Device', font_size=22, color=BLUE_B).move_to(sender)",
+                    "        receiver_label = Text('Server', font_size=22, color=GREEN_B).move_to(receiver)",
+                    "        link = Arrow(sender.get_right(), receiver.get_left(), color=YELLOW, buff=0.18)",
+                    "        packet_1 = Dot(sender.get_right() + RIGHT * 0.25, color=YELLOW)",
+                    "        packet_2 = Dot(sender.get_right() + RIGHT * 0.75, color=TEAL_B)",
+                    "        packet_3 = Dot(sender.get_right() + RIGHT * 1.25, color=ORANGE)",
+                    "        rate_label = Text('successful data / second', font_size=18, color=YELLOW).next_to(link, UP, buff=0.25)",
+                    "        visual_group = VGroup(sender, receiver, sender_label, receiver_label, link, packet_1, packet_2, packet_3, rate_label)",
+                ]
+            )
+        elif visual_focus == "optimization":
+            lines.extend(
+                [
+                    "        axes = Axes(x_range=[0, 7, 1], y_range=[0, 5, 1], x_length=4.8, y_length=3.4, tips=False, axis_config={'color': BLUE_B, 'stroke_width': 2})",
+                    "        feasible = Polygon(axes.c2p(0, 0), axes.c2p(4, 0), axes.c2p(4, 2), axes.c2p(3, 3), axes.c2p(0, 3), color=GREEN_B, fill_color=GREEN_B, fill_opacity=0.28)",
+                    "        c1 = Line(axes.c2p(1, 5), axes.c2p(6, 0), color=YELLOW)",
+                    "        c2 = Line(axes.c2p(4, 0), axes.c2p(4, 4.3), color=TEAL_B)",
+                    "        c3 = Line(axes.c2p(0, 3), axes.c2p(6.5, 3), color=ORANGE)",
+                    "        optimum = Dot(axes.c2p(4, 2), color=RED, radius=0.09)",
+                    "        opt_label = Text('best corner', font_size=18, color=RED).next_to(optimum, UP, buff=0.12)",
+                    "        z_arrow = Arrow(axes.c2p(1.2, 1.0), axes.c2p(4, 2), color=RED, buff=0.08)",
+                    "        feasible_label = Text('feasible region', font_size=18, color=GREEN_B).move_to(axes.c2p(2.0, 1.35))",
+                    "        objective_label = Text('maximize Z', font_size=18, color=RED).next_to(z_arrow, DOWN, buff=0.1)",
+                    "        visual_group = VGroup(axes, feasible, c1, c2, c3, optimum, opt_label, z_arrow, feasible_label, objective_label)",
+                ]
+            )
         else:
             lines.extend(
                 [
@@ -393,30 +616,41 @@ class ManimVideoPlugin:
 
         lines.extend(
             [
-                "        visual_group.to_edge(RIGHT, buff=0.8).shift(DOWN * 0.35)",
+                "        visual_group.scale_to_fit_width(4.4).to_edge(RIGHT, buff=0.65).shift(DOWN * 0.35)",
                 "        self.play(Create(visual_group), run_time=1.4)",
                 "        self.wait(0.9)",
                 "",
-                "        formula_header = Text('Key Formula', font_size=30, color=YELLOW).next_to(goal, DOWN, buff=0.55).to_edge(LEFT, buff=0.8)",
+                "        formula_header = Text('Key Idea', font_size=23, color=YELLOW).next_to(goal, DOWN, buff=0.28).to_edge(LEFT, buff=0.8)",
                 "        formula.next_to(formula_header, DOWN, buff=0.3).to_edge(LEFT, buff=0.8)",
                 "        self.play(Write(formula_header), run_time=0.8)",
                 "        self.play(FadeIn(formula, shift=UP * 0.2), run_time=1.0)",
                 "        self.wait(1.2)",
                 "",
-                "        steps_header = Text('Solution Steps', font_size=30, color=TEAL_B).next_to(formula, DOWN, buff=0.5).to_edge(LEFT, buff=0.8)",
+                "        steps_header = Text('How to Read It', font_size=23, color=TEAL_B).next_to(formula, DOWN, buff=0.28).to_edge(LEFT, buff=0.8)",
                 "        self.play(Write(steps_header), run_time=0.7)",
                 "",
-                f"        step_text = Text({repr(self._wrap_text(steps[0], 44, 3))}, font_size=30).scale_to_fit_width(8.5)",
+                f"        step_text = Text({repr(self._wrap_text(steps[0], 34, 3))}, font_size=19).scale_to_fit_width(5.8)",
                 "        step_text.next_to(steps_header, DOWN, buff=0.28).to_edge(LEFT, buff=0.8)",
                 "        self.play(FadeIn(step_text, shift=UP * 0.12), run_time=0.9)",
                 "        self.wait(1.3)",
             ]
         )
 
+        if visual_focus == "network":
+            lines.extend(
+                [
+                    "        for packet in [packet_1, packet_2, packet_3]:",
+                    "            self.play(packet.animate.move_to(receiver.get_left() + LEFT * 0.2), run_time=0.45)",
+                    "            self.play(FadeOut(packet), run_time=0.2)",
+                    "        self.wait(0.6)",
+                    "",
+                ]
+            )
+
         for idx, step in enumerate(steps[1:], start=2):
             lines.extend(
                 [
-                    f"        step_{idx} = Text({repr(self._wrap_text(step, 44, 3))}, font_size=30).scale_to_fit_width(8.5).move_to(step_text)",
+                    f"        step_{idx} = Text({repr(self._wrap_text(step, 34, 3))}, font_size=19).scale_to_fit_width(5.8).move_to(step_text)",
                     f"        self.play(Transform(step_text, step_{idx}), run_time=1.0)",
                     "        self.wait(1.3)",
                 ]
@@ -425,13 +659,14 @@ class ManimVideoPlugin:
         lines.extend(
             [
                 "",
-                "        worked_header = Text('Worked Example', font_size=30, color=ORANGE).next_to(step_text, DOWN, buff=0.5).to_edge(LEFT, buff=0.8)",
+                "        self.play(FadeOut(step_text), FadeOut(steps_header), run_time=0.5)",
+                "        worked_header = Text('Worked Example', font_size=23, color=ORANGE).next_to(formula, DOWN, buff=0.28).to_edge(LEFT, buff=0.8)",
                 "        self.play(Write(worked_header), run_time=0.8)",
                 "",
-                f"        w1 = Text({repr(self._wrap_text(worked[0], 44, 2))}, font_size=28).scale_to_fit_width(8.5)",
+                f"        w1 = Text({repr(self._wrap_text(worked[0], 34, 2))}, font_size=18).scale_to_fit_width(5.8)",
                 "        w1.next_to(worked_header, DOWN, buff=0.25).to_edge(LEFT, buff=0.8)",
-                f"        w2 = Text({repr(self._wrap_text(worked[1], 44, 2))}, font_size=28).scale_to_fit_width(8.5).next_to(w1, DOWN, buff=0.2).to_edge(LEFT, buff=0.8)",
-                f"        w3 = Text({repr(self._wrap_text(worked[2], 44, 2))}, font_size=28, color=GREEN_B).scale_to_fit_width(8.5).next_to(w2, DOWN, buff=0.2).to_edge(LEFT, buff=0.8)",
+                f"        w2 = Text({repr(self._wrap_text(worked[1], 34, 2))}, font_size=18).scale_to_fit_width(5.8).next_to(w1, DOWN, buff=0.16).to_edge(LEFT, buff=0.8)",
+                f"        w3 = Text({repr(self._wrap_text(worked[2], 34, 2))}, font_size=18, color=GREEN_B).scale_to_fit_width(5.8).next_to(w2, DOWN, buff=0.16).to_edge(LEFT, buff=0.8)",
                 "        self.play(FadeIn(w1, shift=UP * 0.08), run_time=0.8)",
                 "        self.wait(0.8)",
                 "        self.play(FadeIn(w2, shift=UP * 0.08), run_time=0.8)",
@@ -478,7 +713,7 @@ class ManimVideoPlugin:
                 return script, "llm_script_from_plan"
         except Exception:
             pass
-        return self._template_script_from_plan(query, plan), "template_script_fallback"
+        return self._template_script_from_plan(query, plan), "template_script_from_plan"
 
     def _render(self, script_path: Path, media_dir: Path) -> Path:
         media_dir.mkdir(parents=True, exist_ok=True)

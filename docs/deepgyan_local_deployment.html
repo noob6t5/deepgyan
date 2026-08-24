@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepGyan - Local Development and Demo Runbook</title>
+<style>
+:root{
+  --accent:#0f766e; --accent-soft:#ecfdf5;
+  --bg-base:#ffffff; --bg-surface:#f8fafc; --bg-raised:#eef6f5;
+  --text-1:#10201f; --text-2:#475569; --text-3:#64748b;
+  --border:#d8e4e2; --border-strong:#b9cbc8;
+  --good:#047857; --warn:#b45309; --bad:#dc2626;
+  --good-soft:#ecfdf5; --warn-soft:#fffbeb; --bad-soft:#fef2f2;
+  --code-bg:#0b1220; --code-text:#dbe4f3; --code-border:#1e293b;
+  --student:#0f766e; --teacher:#2563eb; --research:#7c3aed;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg-base);color:var(--text-1);
+  font-family:ui-sans-serif,-apple-system,"Segoe UI",Inter,system-ui,sans-serif;
+  font-size:15px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px 88px}
+header.top{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#f5fbfa,#ffffff);
+  padding:42px 0 30px;margin-bottom:34px}
+header.top .wrap{padding-bottom:0}
+h1{font-size:32px;line-height:1.18;margin:0 0 8px;letter-spacing:-.02em}
+.sub{color:var(--text-2);font-size:16px;margin:0 0 16px;max-width:82ch}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.pill{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--border-strong);
+  background:var(--bg-raised);color:var(--text-2);white-space:nowrap}
+h2{font-size:22px;margin:44px 0 6px;letter-spacing:-.01em;padding-top:12px;border-top:1px solid var(--border)}
+h3{font-size:17px;margin:26px 0 6px}
+h4{font-size:13px;margin:16px 0 4px;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em}
+p{margin:8px 0 12px;max-width:84ch}
+ul,ol{max-width:84ch;padding-left:22px}
+li{margin:5px 0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid transparent}
+a:hover{border-bottom-color:var(--accent)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;
+  background:var(--bg-raised);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+pre{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);
+  border-radius:10px;padding:16px 18px;overflow-x:auto;font-size:13px;line-height:1.55}
+pre code{background:none;border:none;padding:0;color:inherit;font-size:13px}
+pre .c{color:#8ea1bb}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+th,td{border:1px solid var(--border);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--bg-raised);font-weight:600;font-size:13px}
+tbody tr:nth-child(even){background:var(--bg-surface)}
+td code{white-space:nowrap}
+.note,.warn,.good{padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0;max-width:84ch}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft)}
+.warn{border-left:3px solid var(--warn);background:var(--warn-soft)}
+.good{border-left:3px solid var(--good);background:var(--good-soft)}
+.toc{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:16px 22px;margin:24px 0 8px}
+.toc ol{columns:2;column-gap:34px;margin:6px 0 0;font-size:14px}
+@media(max-width:820px){.toc ol{columns:1}.grid2,.grid3{grid-template-columns:1fr}}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:14px 0}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:14px 0}
+.card{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--bg-surface)}
+.card h4{margin-top:0}
+.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:5px;font-weight:700;letter-spacing:.03em}
+.t-student{background:var(--accent-soft);color:var(--student);border:1px solid var(--border-strong)}
+.t-teacher{background:#eff6ff;color:var(--teacher);border:1px solid #bfdbfe}
+.t-research{background:#f5f3ff;color:var(--research);border:1px solid #ddd6fe}
+.chain{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12.5px;margin:14px 0 18px;color:var(--text-3)}
+.chain b{font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;
+  padding:4px 9px;color:var(--text-1);white-space:nowrap}
+.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;border:1px solid var(--border-strong);
+  background:var(--bg-raised);border-radius:5px;padding:2px 6px;color:var(--text-2)}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--border);color:var(--text-3);font-size:13px}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <h1>DeepGyan - Local Development and Demo Runbook</h1>
+  <p class="sub">A single-file guide for bringing DeepGyan up on a laptop for frontend work,
+  client demos, and quick product rehearsals. One repo, one FastAPI app, one pgvector database,
+  a seeded Grade 10 textbook catalogue, and a browser at <code>localhost:8000</code> or your chosen
+  demo port.</p>
+  <div class="meta">
+    <span class="pill">Version 1.1 - 24 Aug 2026</span>
+    <span class="pill">Audience: frontend, product, demo operators</span>
+    <span class="pill">Repo: HimalayaAI/deepgyan</span>
+    <span class="pill">Scope: local dev, Ollama demos, hybrid page context</span>
+  </div>
+</div></header>
+
+<main class="wrap">
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#s1">What you are running</a></li>
+    <li><a href="#s2">Fast path for a demo</a></li>
+    <li><a href="#s3">Prerequisites</a></li>
+    <li><a href="#s4">Environment file</a></li>
+    <li><a href="#s5">Start DeepGyan</a></li>
+    <li><a href="#s6">Frontend work loop</a></li>
+    <li><a href="#s7">Demo script</a></li>
+    <li><a href="#s8">Verify it</a></li>
+    <li><a href="#s9">Ports and variables</a></li>
+    <li><a href="#s10">Troubleshooting</a></li>
+  </ol>
+</div>
+
+<h2 id="s1">1 - What you are running</h2>
+
+<p>DeepGyan is served by a Python FastAPI backend. The frontend is plain HTML, CSS, and JavaScript
+mounted by that backend. There is no separate Node dev server in the current local workflow.</p>
+
+<div class="grid3">
+  <div class="card">
+    <h4><span class="tag t-student">frontend</span></h4>
+    <p>PDF viewer, upload flow, book catalog, chat panel, thinking panel, and animation button.
+    Edit files in <code>dashboard/frontend</code> and refresh the browser.</p>
+  </div>
+  <div class="card">
+    <h4><span class="tag t-teacher">backend</span></h4>
+    <p>FastAPI app, OCR, PDF page rendering, embeddings, provider-selectable inference,
+    pgvector persistence, and plugin job endpoints. Runs on <code>:8000</code> by default.</p>
+  </div>
+  <div class="card">
+    <h4><span class="tag t-research">database</span></h4>
+    <p>Postgres with pgvector. Stores books, OCR pages, text chunks, learning events, and plugin jobs.
+    Docker Compose exposes it on <code>:5432</code>.</p>
+  </div>
+</div>
+
+<p>The local request path is short:</p>
+
+<div class="chain">
+  <b>browser</b> -> <b>FastAPI</b> -> <b>Postgres/pgvector</b> -> <b>Sarvam/OpenAI-compatible or Ollama</b>
+</div>
+
+<div class="note">
+  <strong>For frontend-only work:</strong> you can run the app without a valid model key and still
+  inspect layout, upload flow, PDF rendering, book catalog behavior, and static assets. Chat,
+  structured analysis, and animation planning need a configured inference provider.
+</div>
+
+<h2 id="s2">2 - Fast path for a demo</h2>
+
+<p>Use this when someone says, "Can you show DeepGyan in five minutes?"</p>
+
+<pre><code><span class="c"># in deepgyan</span>
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+<span class="c"># edit .env and configure Sarvam/OpenAI-compatible or Ollama inference</span>
+
+./start_services.sh</code></pre>
+
+<p>Open <a href="http://localhost:8000">http://localhost:8000</a>, choose a book from the catalogue,
+wait for the PDF to render, and ask a question about the visible page. For a local VLM demo, use
+the Ollama setup in section 4 and ask a question that needs both page text and visual layout.</p>
+
+<div class="warn">
+  <strong>Before a client demo:</strong> run the command once ahead of time. The first embedding run
+  may download the sentence-transformers model and can feel slow on a fresh machine.
+</div>
+
+<h2 id="s3">3 - Prerequisites</h2>
+
+<ul>
+  <li>Python 3.11+; Python 3.12 is known to work.</li>
+  <li>Docker Desktop or Docker Engine with Compose.</li>
+  <li>Tesseract OCR available on <code>PATH</code>.</li>
+  <li>A Sarvam/OpenAI-compatible API key, or a local Ollama server for offline chat demos.</li>
+  <li>Enough disk/network for Python packages and the sentence-transformers embedding model.</li>
+</ul>
+
+<h3>Install Tesseract</h3>
+
+<pre><code><span class="c"># macOS</span>
+brew install tesseract
+
+<span class="c"># Ubuntu/Debian</span>
+sudo apt-get install tesseract-ocr tesseract-ocr-eng
+
+<span class="c"># Arch Linux</span>
+sudo pacman -S tesseract tesseract-data-eng</code></pre>
+
+<h2 id="s4">4 - Environment file</h2>
+
+<p>DeepGyan loads <code>.env</code> from the repo root. Start from the example and keep secrets out
+of commits.</p>
+
+<pre><code>cp .env.example .env</code></pre>
+
+<p>The minimum useful demo settings are:</p>
+
+<pre><code>INFERENCE_PROVIDER=sarvam
+INFERENCE_API_KEY=your_sarvam_key
+INFERENCE_MODEL=sarvam-m
+SERVER_PORT=8000
+
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=
+DB_NAME=deepgyan
+
+SEED_DEMO_CATALOG=true
+DEMO_CATALOG_DIR=pdfs/cdc-grade-10
+PRECOMPUTE_ON_SELECT=true
+
+PRECOMPUTE_OCR_ON_UPLOAD=true
+PRECOMPUTE_EMBEDDINGS_ON_UPLOAD=true</code></pre>
+
+<p>For a local Ollama demo with no cloud key:</p>
+
+<pre><code>ollama serve
+ollama pull qwen3.5:0.8b
+
+INFERENCE_PROVIDER=ollama
+INFERENCE_BASE_URL=http://localhost:11434
+INFERENCE_MODEL=qwen3.5:0.8b
+INFERENCE_API_KEY=
+INFERENCE_REASONING_EFFORT=
+INFERENCE_TIMEOUT_SECONDS=180
+MODEL_CONTEXT_WINDOW=32768
+MULTIMODAL_PAGE_CONTEXT=true
+PAGE_IMAGE_MAX_SIDE=1400
+PAGE_IMAGE_QUALITY=80</code></pre>
+
+<p>If you do not want to edit <code>.env</code>, launch the same setup with runtime overrides:</p>
+
+<pre><code>APP_CMD='INFERENCE_PROVIDER=ollama \
+INFERENCE_BASE_URL=http://localhost:11434 \
+INFERENCE_MODEL=qwen3.5:0.8b \
+INFERENCE_API_KEY= \
+INFERENCE_REASONING_EFFORT= \
+INFERENCE_TIMEOUT_SECONDS=180 \
+MODEL_CONTEXT_WINDOW=32768 \
+MULTIMODAL_PAGE_CONTEXT=true \
+PAGE_IMAGE_MAX_SIDE=1400 \
+PAGE_IMAGE_QUALITY=80 \
+SERVER_HOST=127.0.0.1 \
+SERVER_PORT=8002 \
+python -m dashboard.backend.app' ./start_services.sh</code></pre>
+
+<p>Then open <a href="http://127.0.0.1:8002">http://127.0.0.1:8002</a>.</p>
+
+<div class="note">
+  <code>qwen3.5:0.8b</code> is the smallest current Qwen vision-language model listed in Ollama.
+  With <code>MULTIMODAL_PAGE_CONTEXT=true</code>, DeepGyan attaches the current page image alongside
+  OCR/text context for current-page chat through Ollama's native <code>images</code> message field.
+  Whole-book retrieval stays text-first. Keep
+  <code>INFERENCE_REASONING_EFFORT</code> blank for demos unless you explicitly want Ollama to spend
+  time producing a hidden thinking trace.
+</div>
+
+<div class="good">
+  <strong>Hybrid context rule:</strong> current-page mode gets OCR text plus one compressed page image.
+  Whole-book mode uses retrieval chunks only. This keeps broad questions fast while still letting the
+  VLM read diagrams, tables, equations, headings, and OCR-missed text on the visible page.
+</div>
+
+<div class="warn">
+  The smaller <code>hf.co/himalaya-ai/himalayagpt-0.5b-it-gguf:Q4_K_M</code> artifact can be
+  pulled by Ollama, but standard Ollama cannot load it yet because it uses the nanochat
+  architecture. Use the Qwen Ollama default above for local demos, or run the 0.5B model with the
+  patched HimalayaAI llama.cpp fork.
+</div>
+
+<p>For the 0.5B nanochat model, run the patched llama.cpp <code>llama-server</code> on
+<code>127.0.0.1:8081</code>, then start DeepGyan's lightweight OpenAI-compatible bridge:</p>
+
+<pre><code>/path/to/HimalayaAI/llama.cpp/build/bin/llama-server \
+  -m /path/to/himalayagpt-0.5b-it.&lt;quant&gt;.gguf \
+  --host 127.0.0.1 \
+  --port 8081 \
+  -c 2048 \
+  -ngl 11 \
+  --no-warmup
+
+python -m tools.deepgyan_openai_bridge
+
+INFERENCE_PROVIDER=openai-compatible
+INFERENCE_BASE_URL=http://127.0.0.1:8088/v1
+INFERENCE_MODEL=himalayagpt-0.5b-it
+INFERENCE_API_KEY=local
+INFERENCE_MAX_TOKENS=384
+INFERENCE_REASONING_EFFORT=
+INFERENCE_TIMEOUT_SECONDS=300
+MODEL_CONTEXT_WINDOW=2048
+SUMMARY_MAX_TOKENS=160
+CONTEXT_WINDOW=1</code></pre>
+
+<p>If upload feels too slow for a UI-only walkthrough, temporarily set:</p>
+
+<pre><code>PRECOMPUTE_EMBEDDINGS_ON_UPLOAD=false</code></pre>
+
+<p>The default demo catalogue is repo-owned at <code>pdfs/cdc-grade-10</code>. On startup,
+DeepGyan copies those PDFs into the runtime uploads folder and registers them in the book
+catalogue. Picking a catalogue book starts OCR and embedding precompute in the background
+when chunks are missing. Set <code>SEED_DEMO_CATALOG=false</code> when you want a blank local
+catalogue, or <code>PRECOMPUTE_ON_SELECT=false</code> for a viewer-only demo.</p>
+
+<p>Current catalogue files:</p>
+
+<ul>
+  <li><code>computer-science-grade-10-english-2082.pdf</code></li>
+  <li><code>optional-mathematics-grade-10-2082.pdf</code></li>
+  <li><code>nepali-grade-10-2082.pdf</code></li>
+</ul>
+
+<div class="note">
+  Leaving <code>DB_PASSWORD</code> empty is fine for the default script. <code>start_services.sh</code>
+  fills it with <code>postgres</code> for local Docker unless you set another value.
+</div>
+
+<h2 id="s5">5 - Start DeepGyan</h2>
+
+<p>The startup script brings up pgvector Postgres, waits for readiness, creates the database if
+needed, applies the schema, then starts the FastAPI app.</p>
+
+<pre><code>./start_services.sh</code></pre>
+
+<p>Expected end state:</p>
+
+<ul>
+  <li>Database container is running.</li>
+  <li>Schema is applied to <code>deepgyan</code>.</li>
+  <li>FastAPI is serving the dashboard at <code>http://localhost:8000</code>.</li>
+  <li>Uploads and generated demo artifacts are written under <code>dashboard/uploads</code> and
+  <code>dashboard/data</code>.</li>
+</ul>
+
+<p>To stop the app, press <span class="kbd">Ctrl</span> + <span class="kbd">C</span>. The database
+volume remains, so books and OCR rows survive normal restarts.</p>
+
+<h2 id="s6">6 - Frontend work loop</h2>
+
+<p>The current frontend is intentionally direct. These are the files most people touch during demo
+polish:</p>
+
+<table>
+  <thead><tr><th>Area</th><th>File</th><th>What changes there</th></tr></thead>
+  <tbody>
+    <tr><td>Page shell</td><td><code>dashboard/frontend/index.html</code></td><td>Panels, controls, labels, and static script/style includes.</td></tr>
+    <tr><td>Behavior</td><td><code>dashboard/frontend/static/app.js</code></td><td>Upload flow, PDF.js rendering, chat streaming, book selection, plugin jobs.</td></tr>
+    <tr><td>Visual style</td><td><code>dashboard/frontend/static/index.css</code></td><td>Layout, responsive behavior, colors, controls, chat and PDF panel styling.</td></tr>
+    <tr><td>Brand assets</td><td><code>dashboard/frontend/assets/</code></td><td>Logo and static images served from <code>/assets</code>.</td></tr>
+  </tbody>
+</table>
+
+<p>For CSS/HTML/JS changes, save and refresh the browser. If Python code changes, the app is started
+with uvicorn reload enabled when launched through <code>python -m dashboard.backend.app</code>, which
+is what <code>start_services.sh</code> runs.</p>
+
+<div class="good">
+  <strong>Demo polish tip:</strong> keep one browser tab on the dashboard and one terminal tab on
+  logs. OCR, embedding precompute, model errors, and animation job failures are much easier to explain
+  when the terminal is visible to the demo operator.
+</div>
+
+<h2 id="s7">7 - Demo script</h2>
+
+<ol>
+  <li>Open <a href="http://localhost:8000">http://localhost:8000</a>.</li>
+  <li>Open the book catalogue and choose a Grade 10 textbook.</li>
+  <li>Wait for the PDF to render in the left panel. If precompute starts, let OCR/embedding logs settle.</li>
+  <li>Use the page arrows or page number input to move to a content-rich page with text, a diagram, a table, or an equation.</li>
+  <li>Ask a question about the current page. Keep the first prompt simple and curriculum-grounded.</li>
+  <li>Toggle <strong>Whole Book Context</strong> for a broader retrieval-based answer after embeddings are ready.</li>
+  <li>Use <strong>Animate</strong> after Manim and rendering dependencies are installed and already tested.</li>
+  <li>Use the <strong>+</strong> button to start a fresh chat for the same book, or switch books to start a new book-specific thread.</li>
+</ol>
+
+<h3>Reliable first prompts</h3>
+
+<ul>
+  <li>"Explain this page in simple Nepali classroom language."</li>
+  <li>"Create three questions a teacher could ask students about this page."</li>
+  <li>"What are the key terms on this page and what do they mean?"</li>
+  <li>"Give me a short classroom activity based on this concept."</li>
+  <li>"Look at the page image. What diagram, table, or figure is visible here?"</li>
+  <li>"Animate the main idea on this page for a Grade 10 student."</li>
+</ul>
+
+<h2 id="s8">8 - Verify it</h2>
+
+<p>Use these checks when you need to distinguish "the browser is stuck" from "the service is down".</p>
+
+<pre><code><span class="c"># app responds</span>
+curl -I http://localhost:8000/
+
+<span class="c"># backend can list persisted books</span>
+curl http://localhost:8000/api/books
+
+<span class="c"># Ollama model is available</span>
+ollama list | grep qwen3.5
+
+<span class="c"># database container status</span>
+docker compose -f core/services/storage/docker/docker-compose.yaml ps
+
+<span class="c"># database readiness</span>
+docker compose -f core/services/storage/docker/docker-compose.yaml exec -T db \
+  pg_isready -U postgres -d deepgyan</code></pre>
+
+<p>Run the Python tests before handing off a local demo build:</p>
+
+<pre><code>pytest</code></pre>
+
+<p>For a quick hybrid-context smoke test, start the app with
+<code>MULTIMODAL_PAGE_CONTEXT=true</code>, select a catalogue book in the browser, move to a page
+with visible figures, and ask: "Look at the attached page image. What visible diagram or figure is
+on this page?" A useful answer should mention something that is visible in the PDF page, not only
+generic textbook text.</p>
+
+<h2 id="s9">9 - Ports and variables</h2>
+
+<table>
+  <thead><tr><th>Thing</th><th>Default</th><th>Change when</th></tr></thead>
+  <tbody>
+    <tr><td>Dashboard</td><td><code>http://localhost:8000</code></td><td>Set <code>SERVER_PORT</code> if another service uses 8000.</td></tr>
+    <tr><td>Postgres</td><td><code>localhost:5432</code></td><td>Set <code>DB_PORT</code> if local Postgres already uses 5432.</td></tr>
+    <tr><td>Database name</td><td><code>deepgyan</code></td><td>Set <code>DB_NAME</code> for isolated demos or test data.</td></tr>
+    <tr><td>Inference provider</td><td><code>INFERENCE_PROVIDER=sarvam</code></td><td>Use <code>sarvam</code>, <code>openai-compatible</code>, or <code>ollama</code>.</td></tr>
+    <tr><td>Model key</td><td><code>INFERENCE_API_KEY</code></td><td>Required for Sarvam/OpenAI-compatible chat, analysis, and animation planning.</td></tr>
+    <tr><td>Ollama</td><td><code>INFERENCE_BASE_URL</code>, <code>INFERENCE_MODEL</code></td><td>Use when <code>INFERENCE_PROVIDER=ollama</code>.</td></tr>
+    <tr><td>Hybrid page context</td><td><code>MULTIMODAL_PAGE_CONTEXT=false</code></td><td>Set true for Ollama VLM current-page chat; tune <code>PAGE_IMAGE_MAX_SIDE</code> and <code>PAGE_IMAGE_QUALITY</code>.</td></tr>
+    <tr><td>Demo catalogue</td><td><code>SEED_DEMO_CATALOG=true</code></td><td>Registers PDFs from <code>pdfs/cdc-grade-10</code> at startup.</td></tr>
+    <tr><td>Small local models</td><td><code>MODEL_CONTEXT_WINDOW=2048</code></td><td>Use smaller <code>INFERENCE_MAX_TOKENS</code>, <code>SUMMARY_MAX_TOKENS</code>, and <code>CONTEXT_WINDOW</code> values for nanochat demos.</td></tr>
+    <tr><td>Embedding provider</td><td><code>sentence-transformers</code></td><td>Use a different provider only when the backend supports and credentials are configured.</td></tr>
+    <tr><td>OCR window</td><td><code>CONTEXT_WINDOW=5</code></td><td>Change if current-page answers should use more or fewer neighboring pages.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s10">10 - Troubleshooting</h2>
+
+<h3>Port 5432 is already in use</h3>
+
+<p>Change <code>DB_PORT</code> in <code>.env</code>, then restart:</p>
+
+<pre><code>DB_PORT=55432
+./start_services.sh</code></pre>
+
+<h3>Port 8000 is already in use</h3>
+
+<p>Change <code>SERVER_PORT</code> in <code>.env</code> and open that port in the browser:</p>
+
+<pre><code>SERVER_PORT=8001
+./start_services.sh</code></pre>
+
+<h3>Database auth errors</h3>
+
+<p>The quickest local reset is to remove the existing Docker volume and let the script recreate it:</p>
+
+<pre><code>docker compose -f core/services/storage/docker/docker-compose.yaml down -v
+./start_services.sh</code></pre>
+
+<p>If you previously ran the project with the old database name, rerun <code>./start_services.sh</code>
+to create <code>deepgyan</code> and apply the schema. Use the reset above only when you do not need
+the old local data.</p>
+
+<h3>OCR does not work</h3>
+
+<p>Confirm Tesseract is installed and visible:</p>
+
+<pre><code>tesseract --version</code></pre>
+
+<p>If Tesseract is installed outside <code>PATH</code>, set <code>TESSERACT_PATH</code> in
+<code>.env</code> to the executable path.</p>
+
+<h3>Chat says inference is not configured</h3>
+
+<p>For Sarvam/OpenAI-compatible providers, set <code>INFERENCE_API_KEY</code>,
+<code>INFERENCE_PROVIDER</code>, and <code>INFERENCE_MODEL</code> in <code>.env</code>, then restart the app.
+For Ollama, set <code>INFERENCE_PROVIDER=ollama</code>, start <code>ollama serve</code>, and run
+<code>ollama pull qwen3.5:0.8b</code>. If Ollama reports
+<code>unknown model architecture: 'nanochat'</code>, the selected model is the 0.5B nanochat GGUF;
+switch to the Qwen Ollama default for standard Ollama.</p>
+
+<h3>Upload works but whole-book context is weak</h3>
+
+<p>Make sure <code>PRECOMPUTE_EMBEDDINGS_ON_UPLOAD=true</code>, re-upload the PDF, and wait for
+embedding logs to finish. Whole-book mode depends on pgvector retrieval.</p>
+
+<h3>Hybrid image context seems ignored</h3>
+
+<p>Confirm you are using <code>INFERENCE_PROVIDER=ollama</code>,
+<code>INFERENCE_MODEL=qwen3.5:0.8b</code>, and <code>MULTIMODAL_PAGE_CONTEXT=true</code>. Hybrid
+page images are attached only for current-page mode, not whole-book mode. If the model misses small
+figures or equations, raise <code>PAGE_IMAGE_MAX_SIDE</code> to <code>1600</code> or
+<code>1800</code>, then restart the app.</p>
+
+<h3>Animation does not produce a video</h3>
+
+<p>The animation button creates a plugin job, but rendering requires optional Manim dependencies,
+LaTeX, and ffmpeg. For client demos, either pre-test this path on the demo machine or skip the
+animation step.</p>
+
+<footer>
+  DeepGyan local runbook. Keep this file self-contained so it can be opened directly from disk,
+  shared in a browser, or attached to a frontend/demo handoff.
+</footer>
+
+</main>
+</body>
+</html>
