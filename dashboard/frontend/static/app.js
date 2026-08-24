@@ -19,6 +19,8 @@ const thinkingBox = document.getElementById('thinking-box');
 
 const contextToggle = document.getElementById('context-toggle');
 const thinkingPanel = document.getElementById('thinking-panel');
+const threadSelect = document.getElementById('thread-select');
+const newChatBtn = document.getElementById('new-chat-btn');
 
 let pdfDoc = null;
 let pageNum = 1;
@@ -26,9 +28,156 @@ let pageRendering = false;
 let pageNumPending = null;
 let currentPdfFilename = null;
 let currentBookId = null;
+let bookListRetryTimer = null;
+let activeThreadId = null;
+let chatThreads = [];
 
-async function refreshBookList(selectedId = null) {
+const CHAT_THREADS_STORAGE_KEY = 'deepgyan.chatThreads.v2';
+const DEFAULT_WELCOME = 'Hello! Upload a PDF on the left. The OCR system will automatically detect text on the pages you ask about.';
+
+function createId(prefix) {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function loadChatThreads() {
+    try {
+        const saved = localStorage.getItem(CHAT_THREADS_STORAGE_KEY);
+        chatThreads = saved ? JSON.parse(saved) : [];
+        if (!Array.isArray(chatThreads)) chatThreads = [];
+    } catch (e) {
+        chatThreads = [];
+    }
+}
+
+function saveChatThreads() {
+    try {
+        localStorage.setItem(CHAT_THREADS_STORAGE_KEY, JSON.stringify(chatThreads.slice(-50)));
+    } catch (e) {
+        console.warn('Could not save chat threads', e);
+    }
+}
+
+function getActiveThread() {
+    return chatThreads.find((thread) => thread.id === activeThreadId) || null;
+}
+
+function shortenLabel(text, maxLength = 34) {
+    if (!text) return 'Untitled';
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function updateThreadControls() {
+    if (!threadSelect) return;
+    threadSelect.innerHTML = '';
+
+    if (!chatThreads.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No chat yet';
+        threadSelect.appendChild(option);
+        threadSelect.disabled = true;
+        if (newChatBtn) newChatBtn.disabled = !currentBookId;
+        return;
+    }
+
+    const sortedThreads = [...chatThreads].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    sortedThreads.forEach((thread) => {
+        const option = document.createElement('option');
+        option.value = thread.id;
+        const bookLabel = shortenLabel(thread.bookTitle || 'No book', 18);
+        const titleLabel = shortenLabel(thread.title || 'New chat', 24);
+        option.textContent = `${bookLabel} - ${titleLabel}`;
+        threadSelect.appendChild(option);
+    });
+    threadSelect.value = activeThreadId || '';
+    threadSelect.disabled = false;
+    if (newChatBtn) newChatBtn.disabled = !currentBookId;
+}
+
+function renderStoredMessage(message) {
+    addMessage(message.role, message.text, message.isMeta, { persist: false, messageId: message.id });
+}
+
+function renderThread(threadId) {
+    const thread = chatThreads.find((item) => item.id === threadId);
+    chatMessages.innerHTML = '';
+    if (!thread || !thread.messages.length) {
+        addMessage('system', DEFAULT_WELCOME, false, { persist: false });
+        return;
+    }
+    thread.messages.forEach(renderStoredMessage);
+}
+
+function createThreadForCurrentBook(initialMessage = null) {
+    const now = new Date().toISOString();
+    const chatNumber = chatThreads.filter((thread) => thread.bookId === currentBookId).length + 1;
+    const thread = {
+        id: createId('thread'),
+        bookId: currentBookId,
+        bookTitle: currentPdfFilename || 'Current book',
+        title: `Chat ${chatNumber}`,
+        createdAt: now,
+        updatedAt: now,
+        messages: []
+    };
+    chatThreads.push(thread);
+    activeThreadId = thread.id;
+    renderThread(thread.id);
+    if (initialMessage) {
+        addMessage('system', initialMessage);
+    }
+    saveChatThreads();
+    updateThreadControls();
+    return thread;
+}
+
+function updateThreadBookMetadata(thread, bookId, filename) {
+    if (!thread) return;
+    thread.bookId = bookId;
+    thread.bookTitle = filename || thread.bookTitle || 'Current book';
+    thread.updatedAt = new Date().toISOString();
+    saveChatThreads();
+    updateThreadControls();
+}
+
+function rememberMessage(role, text, isMeta = false) {
+    const thread = getActiveThread();
+    if (!thread) return null;
+    const message = {
+        id: createId('msg'),
+        role,
+        text,
+        isMeta,
+        createdAt: new Date().toISOString()
+    };
+    thread.messages.push(message);
+    thread.updatedAt = message.createdAt;
+    if (role === 'user' && /^Chat \d+$/.test(thread.title || '')) {
+        thread.title = text.replace(/^\[Animate\]\s*/i, '').slice(0, 48) || 'New chat';
+    }
+    saveChatThreads();
+    updateThreadControls();
+    return message.id;
+}
+
+function updateStoredMessage(messageId, text) {
+    if (!messageId) return;
+    const thread = getActiveThread();
+    if (!thread) return;
+    const message = thread.messages.find((item) => item.id === messageId);
+    if (!message) return;
+    message.text = text;
+    thread.updatedAt = new Date().toISOString();
+    saveChatThreads();
+    updateThreadControls();
+}
+
+async function refreshBookList(selectedId = null, retryCount = 0) {
     if (!bookList) return;
+    if (bookListRetryTimer) {
+        clearTimeout(bookListRetryTimer);
+        bookListRetryTimer = null;
+    }
     try {
         const res = await fetch('/api/books');
         const data = await res.json();
@@ -36,6 +185,12 @@ async function refreshBookList(selectedId = null) {
         bookList.innerHTML = '';
         if (!books.length) {
             bookList.innerHTML = '<div class="book-empty">No books yet.</div>';
+            if (retryCount < 5) {
+                bookListRetryTimer = setTimeout(
+                    () => refreshBookList(selectedId, retryCount + 1),
+                    1500
+                );
+            }
             return;
         }
         books.forEach((book) => {
@@ -50,10 +205,16 @@ async function refreshBookList(selectedId = null) {
         });
     } catch (e) {
         console.error('Failed to load books', e);
+        if (retryCount < 5) {
+            bookListRetryTimer = setTimeout(
+                () => refreshBookList(selectedId, retryCount + 1),
+                1500
+            );
+        }
     }
 }
 
-async function selectBook(bookId) {
+async function selectBook(bookId, options = {}) {
     if (!bookId) return;
     try {
         const res = await fetch('/api/books/select', {
@@ -63,10 +224,24 @@ async function selectBook(bookId) {
         });
         if (!res.ok) throw new Error('Failed to select book');
         const data = await res.json();
+        const previousBookId = currentBookId;
         currentBookId = data.book.id;
         currentPdfFilename = data.book.filename;
         loadPdfUrl(`/uploads/${currentPdfFilename}`);
-        addMessage('system', `Switched to book: ${currentPdfFilename}`);
+
+        if (options.threadId) {
+            activeThreadId = options.threadId;
+            updateThreadBookMetadata(getActiveThread(), currentBookId, currentPdfFilename);
+            renderThread(activeThreadId);
+        } else if (!activeThreadId || previousBookId !== currentBookId) {
+            createThreadForCurrentBook(`New chat started for: ${currentPdfFilename}`);
+        } else {
+            updateThreadBookMetadata(getActiveThread(), currentBookId, currentPdfFilename);
+        }
+
+        if (data.precompute_started) {
+            addMessage('system', 'OCR + embeddings are precomputing in the background for this textbook.');
+        }
         refreshBookList(currentBookId);
     } catch (e) {
         addMessage('system', 'Error selecting book: ' + e.message);
@@ -160,7 +335,7 @@ pdfUpload.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    addMessage('system', `Uploading ${file.name}...`);
+    addMessage('system', `Uploading ${file.name}...`, false, { persist: false });
     
     const formData = new FormData();
     formData.append('file', file);
@@ -175,7 +350,9 @@ pdfUpload.addEventListener('change', async (e) => {
         
         if (data.status === 'success') {
             currentPdfFilename = data.filename;
-            addMessage('system', `PDF successfully processed. OCR + embeddings are precomputing in the background.`);
+            currentBookId = data.book_id || currentBookId;
+            createThreadForCurrentBook(`PDF processed: ${currentPdfFilename}`);
+            addMessage('system', `OCR + embeddings are precomputing in the background.`);
             
             loadPdfUrl(`/uploads/${currentPdfFilename}`);
             refreshBookList(data.book_id || null);
@@ -188,7 +365,17 @@ pdfUpload.addEventListener('change', async (e) => {
     }
 });
 
+loadChatThreads();
+updateThreadControls();
 refreshBookList();
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        refreshBookList(currentBookId);
+    }
+});
+
+window.addEventListener('focus', () => refreshBookList(currentBookId));
 
 if (catalogToggle && bookCatalog) {
     catalogToggle.addEventListener('click', () => {
@@ -196,8 +383,36 @@ if (catalogToggle && bookCatalog) {
     });
 }
 
-function addMessage(role, text, isMeta = false) {
+if (newChatBtn) {
+    newChatBtn.addEventListener('click', () => {
+        if (!currentBookId) {
+            addMessage('system', 'Select a book before starting a new chat.', false, { persist: false });
+            return;
+        }
+        createThreadForCurrentBook(`New chat started for: ${currentPdfFilename}`);
+        chatInput.focus();
+    });
+}
+
+if (threadSelect) {
+    threadSelect.addEventListener('change', () => {
+        const thread = chatThreads.find((item) => item.id === threadSelect.value);
+        if (!thread) return;
+        activeThreadId = thread.id;
+        if (thread.bookId && thread.bookId !== currentBookId) {
+            selectBook(thread.bookId, { threadId: thread.id });
+            return;
+        }
+        renderThread(thread.id);
+        updateThreadControls();
+        chatInput.focus();
+    });
+}
+
+function addMessage(role, text, isMeta = false, options = {}) {
     const msgDiv = document.createElement('div');
+    const shouldPersist = options.persist !== false;
+    const messageId = options.messageId || (shouldPersist ? rememberMessage(role, text, isMeta) : null);
     if (isMeta) {
         msgDiv.className = 'message meta-msg';
         msgDiv.textContent = text;
@@ -207,6 +422,9 @@ function addMessage(role, text, isMeta = false) {
             <div class="avatar">${role === 'user' ? '👤' : '🤖'}</div>
             <div class="content">${escapeHtml(text)}</div>
         `;
+    }
+    if (messageId) {
+        msgDiv.dataset.messageId = messageId;
     }
     chatMessages.appendChild(msgDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -309,6 +527,9 @@ chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const query = chatInput.value.trim();
     if (!query) return;
+    if (!activeThreadId && currentBookId) {
+        createThreadForCurrentBook(`New chat started for: ${currentPdfFilename}`);
+    }
 
     addMessage('user', query);
     chatInput.value = '';
@@ -335,7 +556,8 @@ chatForm.addEventListener('submit', async (e) => {
                 query: query,
                 mode: mode,
                 current_page: pageNum,
-                book_id: currentBookId
+                book_id: currentBookId,
+                thread_id: activeThreadId
             })
         });
 
@@ -381,6 +603,7 @@ chatForm.addEventListener('submit', async (e) => {
                         } else if (dataMsg.content) {
                             fullText += dataMsg.content;
                             botContent.innerHTML = escapeHtml(fullText).replace(/\n/g, '<br/>');
+                            updateStoredMessage(botMsgDiv.dataset.messageId, fullText);
                             chatMessages.scrollTop = chatMessages.scrollHeight;
                         }
                     } catch (e) {}
@@ -389,6 +612,7 @@ chatForm.addEventListener('submit', async (e) => {
         }
     } catch (err) {
         botContent.innerHTML = `Error: ${err.message}`;
+        updateStoredMessage(botMsgDiv.dataset.messageId, `Error: ${err.message}`);
     } finally {
         if (thinkingPanel && !hasThinking) {
             thinkingPanel.classList.remove('active');
@@ -410,6 +634,9 @@ if (animateBtn) {
         if (!currentPdfFilename) {
             addMessage('system', 'Upload or select a book before creating animations.');
             return;
+        }
+        if (!activeThreadId && currentBookId) {
+            createThreadForCurrentBook(`New chat started for: ${currentPdfFilename}`);
         }
 
         const mode = contextToggle && contextToggle.checked ? 'analyze' : 'environment';
@@ -436,7 +663,8 @@ if (animateBtn) {
                     query: query,
                     mode: mode,
                     current_page: pageNum,
-                    book_id: currentBookId
+                    book_id: currentBookId,
+                    thread_id: activeThreadId
                 })
             });
             const data = await response.json();
@@ -446,6 +674,7 @@ if (animateBtn) {
 
             animationCard = createAnimationCard(botContent, data.job_id);
             await pollAnimationJob(data.job_id, animationCard);
+            updateStoredMessage(botMsgDiv.dataset.messageId, `Animation generated for: ${query}`);
         } catch (err) {
             if (animationCard && animationCard.statusEl) {
                 animationCard.statusEl.textContent = 'Animation error';
@@ -455,6 +684,7 @@ if (animateBtn) {
             } else {
                 botContent.innerHTML = `Animation error: ${escapeHtml(err.message)}`;
             }
+            updateStoredMessage(botMsgDiv.dataset.messageId, `Animation error: ${err.message}`);
         } finally {
             chatInput.disabled = false;
             sendBtn.disabled = false;

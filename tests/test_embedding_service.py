@@ -64,6 +64,7 @@ def _install_fake_psycopg2(monkeypatch):
 
 def test_index_embeddings_writes_records(monkeypatch):
     state = _install_fake_psycopg2(monkeypatch)
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
 
     chunks = ["hello"]
     embeddings = [[1.23456789, 2.0]]
@@ -71,6 +72,7 @@ def test_index_embeddings_writes_records(monkeypatch):
     index_embeddings(chunks, embeddings, source="book-1", ensure_schema=True)
 
     assert len(state["connect_calls"]) == 1
+    assert state["connect_calls"][0]["password"] == "postgres"
     assert state["conn"].cursor_obj.executed, "schema should be applied when ensure_schema=True"
     assert len(state["execute_calls"]) == 1
 

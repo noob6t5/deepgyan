@@ -1,0 +1,35 @@
+{
+  "name": "CDC Grade 10 Demo Catalogue",
+  "source": "Curriculum Development Center Nepal",
+  "source_url": "https://moecdc.gov.np/category/textbook--g-/",
+  "grade": 10,
+  "books": [
+    {
+      "title": "Nepali Grade 10",
+      "filename": "nepali-grade-10-2082.pdf",
+      "language": "Nepali",
+      "subject": "Nepali",
+      "edition": "2082",
+      "source_url": "https://moecdc.gov.np/content/596/nepali-class---10/",
+      "pdf_url": "https://giwmscdnone.gov.np/media/pdf_upload/class%2010%20Nepali%20Final_kjvwvtg.pdf"
+    },
+    {
+      "title": "Optional Mathematics Grade 10",
+      "filename": "optional-mathematics-grade-10-2082.pdf",
+      "language": "Nepali",
+      "subject": "Optional Mathematics",
+      "edition": "2082",
+      "source_url": "https://moecdc.gov.np/content/569/opt-math-g/",
+      "pdf_url": "https://giwmscdnone.gov.np/media/pdf_upload/Final%20OPT%20math%20class%2010%20for%20Press%20(11-16)_cljqcad.pdf"
+    },
+    {
+      "title": "Computer Science Grade 10 English",
+      "filename": "computer-science-grade-10-english-2082.pdf",
+      "language": "English",
+      "subject": "Computer Science",
+      "edition": "2082",
+      "source_url": "https://moecdc.gov.np/content/493/elective-computer-science-class-10--english-edition/",
+      "pdf_url": "https://giwmscdnone.gov.np/media/pdf_upload/CSGrade%2010_rs8obhn.pdf"
+    }
+  ]
+}

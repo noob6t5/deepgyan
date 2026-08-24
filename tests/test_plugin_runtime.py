@@ -24,6 +24,45 @@ class _DummyInference:
         return "", ""
 
 
+class _GenericPlanInference:
+    max_tokens = 1200
+
+    @staticmethod
+    def is_configured() -> bool:
+        return True
+
+    @staticmethod
+    def chat_completions(messages, max_tokens=None):
+        class _Msg:
+            content = (
+                '{"title":"Step-by-step concept walkthrough",'
+                '"learning_goal":"Solve the question",'
+                '"formula_latex":"Write the key formula first, then substitute values step by step.",'
+                '"steps":["Identify the known values and what must be found.",'
+                '"Write the core formula clearly before calculation.",'
+                '"Substitute values carefully and simplify line by line.",'
+                '"Check units and verify the final answer is reasonable."],'
+                '"worked_example":["Given values from the question.",'
+                '"Use formula: Write the key formula first.",'
+                '"Compute each step and present the final result clearly."],'
+                '"visual_focus":"generic",'
+                '"answer_line":"The answer follows from applying the formula step by step."}'
+            )
+            reasoning_content = None
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+
+        return _Resp()
+
+    @staticmethod
+    def extract_response_payload(response):
+        return response.choices[0].message.content, ""
+
+
 class _SimplePlugin:
     plugin_id = "simple"
 
@@ -160,3 +199,108 @@ def test_plan_generation_returns_steps():
     assert mode == "inference_unavailable_fallback"
     assert isinstance(plan.get("steps"), list)
     assert len(plan["steps"]) >= 4
+
+
+def test_rate_fallback_pattern_handles_throughput():
+    plugin = ManimVideoPlugin(_DummyInference())
+    plan = plugin._fallback_plan(
+        "explain throughput",
+        "Throughput means the actual amount of data sent or received over a network.",
+    )
+    script = plugin._template_script_from_plan("explain throughput", plan)
+
+    assert plan["title"] == "Rate and Capacity"
+    assert plan["visual_focus"] == "network"
+    assert "successfully transferred" in plan["formula_latex"]
+    assert "successful data / second" in script
+    assert "Write the key formula first" not in script
+    assert plugin._script_looks_valid(script, "LessonScene")
+
+
+def test_generic_llm_plan_falls_back_to_rate_pattern():
+    plugin = ManimVideoPlugin(_GenericPlanInference())
+
+    plan, mode = plugin._generate_plan(
+        "explain throughput",
+        "Throughput is actual data successfully transferred per second.",
+    )
+
+    assert mode == "plan_quality_fallback"
+    assert plan["title"] == "Rate and Capacity"
+    assert "Throughput =" in plan["formula_latex"]
+
+
+def test_identity_fallback_uses_relationship_pattern():
+    plugin = ManimVideoPlugin(_DummyInference())
+
+    plan = plugin._fallback_plan(
+        "Explain conditional identities in Nepali:",
+        "Conditional Identities: tan A = cot B is true when A + B = 90°.",
+    )
+    script = plugin._template_script_from_plan("Explain conditional identities in Nepali:", plan)
+
+    assert plan["title"] == "Conditional Relationship"
+    assert plan["visual_focus"] == "identity"
+    assert "A + B = 90" in plan["formula_latex"]
+    assert "Write the key formula first" not in script
+    assert "Given values from the question" not in script
+    assert "condition: A + B = 90" in script
+    assert plugin._script_looks_valid(script, "LessonScene")
+
+
+def test_optimization_fallback_pattern_handles_linear_programming():
+    plugin = ManimVideoPlugin(_DummyInference())
+
+    plan = plugin._fallback_plan(
+        "Explain Linear programming in Nepali",
+        "रेखीय योजना (Linear Programming) uses linear inequalities and an objective function.",
+    )
+    script = plugin._template_script_from_plan("Explain Linear programming in Nepali", plan)
+
+    assert plan["title"] == "Optimization With Constraints"
+    assert plan["visual_focus"] == "optimization"
+    assert "Max/Min Z" in plan["formula_latex"]
+    assert "feasible region" in script
+    assert "maximize Z" in script
+    assert "best corner" in script
+    assert "Write the key formula first" not in script
+    assert "Given values from the question" not in script
+    assert plugin._script_looks_valid(script, "LessonScene")
+
+
+def test_optimization_fallback_pattern_handles_maximize_prompt():
+    plugin = ManimVideoPlugin(_DummyInference())
+
+    plan = plugin._fallback_plan(
+        "How do I maximize profit with constraints?",
+        "A business chooses two products with limited labor and material.",
+    )
+
+    assert plan["title"] == "Optimization With Constraints"
+    assert plan["visual_focus"] == "optimization"
+
+
+def test_generic_llm_plan_falls_back_to_conditional_identity_plan():
+    plugin = ManimVideoPlugin(_GenericPlanInference())
+
+    plan, mode = plugin._generate_plan(
+        "Explain conditional identities in Nepali:",
+        "tan A = cot B is true when A + B = 90°.",
+    )
+
+    assert mode == "plan_quality_fallback"
+    assert plan["title"] == "Conditional Relationship"
+    assert plan["visual_focus"] == "identity"
+
+
+def test_generic_llm_plan_falls_back_to_optimization_pattern():
+    plugin = ManimVideoPlugin(_GenericPlanInference())
+
+    plan, mode = plugin._generate_plan(
+        "Explain Linear programming in Nepali",
+        "रेखीय योजना (Linear Programming) solves optimization with linear inequalities.",
+    )
+
+    assert mode == "plan_quality_fallback"
+    assert plan["title"] == "Optimization With Constraints"
+    assert plan["visual_focus"] == "optimization"
