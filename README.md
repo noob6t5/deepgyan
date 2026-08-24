@@ -77,6 +77,8 @@ See `.env.example` for all settings. Common ones:
 - `PRECOMPUTE_EMBEDDINGS_ON_UPLOAD` (default: true)
 - `EMBEDDING_PROVIDER` (`sentence_transformers` or `openai`)
 - `EMBEDDING_MODEL_NAME` (default: `all-MiniLM-L6-v2`)
+- `CHAPTER_CONTEXT` (default: true) - send the whole chapter when it fits the model window
+- `MODEL_CONTEXT_WINDOW` - also sent to Ollama as `num_ctx`; Ollama defaults to 4096 without it
 - `ANIMATION_CONTEXT_MAX_CHARS` (default: `9000`)
 - `ANIMATION_RENDER_TIMEOUT_SECONDS` (default: `180`)
 

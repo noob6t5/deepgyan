@@ -37,6 +37,7 @@ class InferenceService:
     provider: str = "sarvam"
     base_url: str | None = None
     timeout_seconds: float = 120.0
+    context_window: int | None = None
     transport: Callable[[str, dict[str, Any], float], dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
@@ -139,6 +140,11 @@ class InferenceService:
         token_limit = max_tokens if max_tokens is not None else self.max_tokens
         if token_limit:
             options["num_predict"] = token_limit
+        # Ollama does not read the window off the model: without num_ctx it
+        # allocates its own default (4096) and silently truncates anything
+        # longer, so the caller's context budget has to be stated explicitly.
+        if self.context_window:
+            options["num_ctx"] = int(self.context_window)
         payload = {
             "model": self.model,
             "messages": messages,

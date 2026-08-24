@@ -320,3 +320,78 @@ async def test_generate_structured_context_rejects_prompt_echo(monkeypatch):
     )
 
     assert structured == raw_text
+
+
+def _load_book(monkeypatch, chapters, total_pages, page_chars=500):
+    """Point the module globals at a fake book with a known chapter index."""
+    monkeypatch.setitem(dashboard_app.global_pdf_data, "total_pages", total_pages)
+    monkeypatch.setitem(dashboard_app.global_pdf_data, "filename", "book.pdf")
+    monkeypatch.setitem(dashboard_app.global_pdf_data, "filepath", None)
+    monkeypatch.setitem(dashboard_app.global_pdf_data, "chapters", chapters)
+    monkeypatch.setitem(
+        dashboard_app.global_pdf_data,
+        "pages",
+        {index: "x" * page_chars for index in range(total_pages)},
+    )
+
+
+def test_select_context_range_uses_whole_chapter_when_it_fits(monkeypatch):
+    from core.services.ingestion.chapter_index import Chapter
+
+    monkeypatch.setattr(dashboard_app, "CHAPTER_CONTEXT", True)
+    monkeypatch.setattr(dashboard_app, "MODEL_CONTEXT_WINDOW", 32768)
+    _load_book(monkeypatch, [Chapter("Unit 1", 0, 29), Chapter("Unit 2", 30, 59)], 60)
+
+    start, end, chapter = dashboard_app._select_context_range(10, 5, 60)
+    assert (start, end) == (0, 29)
+    assert chapter is not None and chapter.title == "Unit 1"
+
+
+def test_select_context_range_falls_back_and_clamps_to_the_chapter(monkeypatch):
+    """An oversized chapter degrades to the page window, without bleeding out."""
+    from core.services.ingestion.chapter_index import Chapter
+
+    monkeypatch.setattr(dashboard_app, "CHAPTER_CONTEXT", True)
+    monkeypatch.setattr(dashboard_app, "MODEL_CONTEXT_WINDOW", 2048)
+    _load_book(monkeypatch, [Chapter("Unit 1", 0, 29), Chapter("Unit 2", 30, 59)], 60)
+
+    start, end, chapter = dashboard_app._select_context_range(31, 5, 60)
+    assert chapter is None
+    assert start == 30  # clamped to the chapter start, not 26
+    assert end == 36
+
+
+def test_select_context_range_ignores_chapters_when_disabled(monkeypatch):
+    from core.services.ingestion.chapter_index import Chapter
+
+    monkeypatch.setattr(dashboard_app, "CHAPTER_CONTEXT", False)
+    monkeypatch.setattr(dashboard_app, "MODEL_CONTEXT_WINDOW", 32768)
+    _load_book(monkeypatch, [Chapter("Unit 1", 0, 29)], 60)
+
+    start, end, chapter = dashboard_app._select_context_range(10, 5, 60)
+    assert (start, end, chapter) == (5, 15, None)
+
+
+def test_select_context_range_without_a_chapter_index(monkeypatch):
+    monkeypatch.setattr(dashboard_app, "CHAPTER_CONTEXT", True)
+    monkeypatch.setattr(dashboard_app, "MODEL_CONTEXT_WINDOW", 32768)
+    _load_book(monkeypatch, [], 60)
+
+    start, end, chapter = dashboard_app._select_context_range(10, 5, 60)
+    assert (start, end, chapter) == (5, 15, None)
+
+
+def test_page_image_reservation_can_push_a_chapter_over_budget(monkeypatch):
+    """The attached image competes with text for the same window."""
+    from core.services.ingestion.chapter_index import Chapter
+
+    monkeypatch.setattr(dashboard_app, "CHAPTER_CONTEXT", True)
+    monkeypatch.setattr(dashboard_app, "MODEL_CONTEXT_WINDOW", 8192)
+    monkeypatch.setattr(dashboard_app, "PAGE_IMAGE_TOKEN_ESTIMATE", 6000)
+    _load_book(monkeypatch, [Chapter("Unit 1", 0, 29)], 60, page_chars=500)
+
+    monkeypatch.setattr(dashboard_app, "_page_image_enabled", lambda: False)
+    assert dashboard_app._select_context_range(10, 5, 60)[2] is not None
+
+    monkeypatch.setattr(dashboard_app, "_page_image_enabled", lambda: True)
+    assert dashboard_app._select_context_range(10, 5, 60)[2] is None

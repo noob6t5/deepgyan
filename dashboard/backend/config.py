@@ -127,6 +127,15 @@ EMBEDDING_SOURCE_PREFIX = os.getenv("EMBEDDING_SOURCE_PREFIX", "upload")
 RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "4"))
 EMBEDDING_WARMUP = os.getenv("EMBEDDING_WARMUP", "false").lower() in {"1", "true", "yes"}
 
+# Chapter-level context: when the current chapter fits the model window, send
+# the whole chapter instead of a +/- CONTEXT_WINDOW page slice.
+CHAPTER_CONTEXT = os.getenv("CHAPTER_CONTEXT", "true").lower() in {"1", "true", "yes"}
+# Chars assumed for a page whose text is not cached yet and that carries no
+# native text (i.e. OCR-only), used only for the fits-the-window estimate.
+CHAPTER_OCR_PAGE_CHAR_ESTIMATE = int(os.getenv("CHAPTER_OCR_PAGE_CHAR_ESTIMATE", "1800"))
+# Tokens reserved for an attached page image when multimodal context is on.
+PAGE_IMAGE_TOKEN_ESTIMATE = int(os.getenv("PAGE_IMAGE_TOKEN_ESTIMATE", "1100"))
+
 MULTIMODAL_PAGE_CONTEXT = os.getenv("MULTIMODAL_PAGE_CONTEXT", "false").lower() in {
     "1",
     "true",

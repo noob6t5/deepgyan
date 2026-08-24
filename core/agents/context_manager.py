@@ -6,6 +6,29 @@ from typing import Awaitable, Callable
 from core.agents.prompt_manager import PromptManager
 
 
+def context_char_budget(
+    *,
+    model_context_window: int,
+    safety_tokens: int,
+    token_char_ratio: float,
+    output_tokens: int,
+    reserved_tokens: int = 0,
+    overhead_chars: int = 0,
+) -> int:
+    """Chars of source text that still fit the model window.
+
+    `reserved_tokens` covers anything already claimed in the window that is
+    not source text -- today that is the attached page image under
+    multimodal context. `overhead_chars` covers the prompt scaffolding the
+    context gets wrapped in. Returns 0 when nothing fits, which callers read
+    as "this range is too big".
+    """
+    available_tokens = model_context_window - output_tokens - safety_tokens - reserved_tokens
+    if available_tokens <= 0:
+        return 0
+    return max(0, int(available_tokens * token_char_ratio) - overhead_chars)
+
+
 class ContextManager:
     """Builds structured context blocks for tutoring."""
 

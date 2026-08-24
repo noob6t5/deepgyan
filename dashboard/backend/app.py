@@ -59,6 +59,9 @@ from .config import (
     MULTIMODAL_PAGE_CONTEXT,
     PAGE_IMAGE_MAX_SIDE,
     PAGE_IMAGE_QUALITY,
+    CHAPTER_CONTEXT,
+    CHAPTER_OCR_PAGE_CHAR_ESTIMATE,
+    PAGE_IMAGE_TOKEN_ESTIMATE,
     ANIMATION_CONTEXT_MAX_CHARS,
     ANIMATION_RENDER_TIMEOUT_SECONDS,
     validate_config,
@@ -70,6 +73,8 @@ from core.services.inference import InferenceService
 from core.services.plugins import ManimVideoPlugin, PluginJobRequest, PluginRuntime
 from core.agents.context_manager import ContextManager
 from core.agents.prompt_manager import PromptManager
+from core.agents.context_manager import context_char_budget
+from core.services.ingestion.chapter_index import Chapter, chapter_for_page, detect_chapters
 
 # Setup PyTesseract
 import pytesseract
@@ -89,6 +94,7 @@ inference_service = InferenceService(
     provider=INFERENCE_PROVIDER,
     base_url=INFERENCE_BASE_URL,
     timeout_seconds=INFERENCE_TIMEOUT_SECONDS,
+    context_window=MODEL_CONTEXT_WINDOW,
 )
 context_manager = ContextManager(
     inference_service,
@@ -120,6 +126,7 @@ global_pdf_data = {
     "toc": [],
     "pages": {},
     "page_images": {},
+    "chapters": None,
     "total_pages": 0,
     "analysis": DEFAULT_ANALYSIS_MESSAGE,
     "book_id": None,
@@ -142,6 +149,11 @@ def _extract_response_payload(response) -> tuple[str, str]:
 def _stream_text_chunks(text: str, size: int = 80):
     for i in range(0, len(text), size):
         yield text[i : i + size]
+
+
+def _page_image_enabled() -> bool:
+    """True when a page image will be attached to the next current-page call."""
+    return bool(MULTIMODAL_PAGE_CONTEXT and INFERENCE_PROVIDER == "ollama")
 
 
 def _render_page_image_base64(page_index: int) -> str | None:
@@ -784,6 +796,7 @@ async def select_book(request: Request):
     global_pdf_data["book_id"] = book_id
     global_pdf_data["pages"] = {}
     global_pdf_data["page_images"] = {}
+    global_pdf_data["chapters"] = None
     global_pdf_data["precompute"] = {
         "running": False,
         "current_page": 0,
@@ -839,6 +852,7 @@ async def create_plugin_job(request: Request):
                 global_pdf_data["book_id"] = book_id
                 global_pdf_data["pages"] = {}
                 global_pdf_data["page_images"] = {}
+                global_pdf_data["chapters"] = None
     if global_pdf_data["total_pages"] == 0:
         raise HTTPException(status_code=400, detail=ERR_NO_PDF_UPLOADED)
 
@@ -936,6 +950,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             "toc": toc,
             "pages": {},
             "page_images": {},
+            "chapters": None,
             "total_pages": total_pages,
             "analysis": DEFAULT_ANALYSIS_MESSAGE,
             "book_id": book_id,
@@ -1013,14 +1028,134 @@ async def extract_page_async(page_index: int) -> str:
     """Run the synchronous extraction in a thread pool to avoid blocking FastAPI"""
     return await asyncio.to_thread(extract_page_sync, page_index)
 
+def _chapter_index() -> list[Chapter]:
+    """Chapter ranges for the loaded book, detected once and cached."""
+    cached = global_pdf_data.get("chapters")
+    if cached is not None:
+        return cached
+
+    chapters: list[Chapter] = []
+    filepath = global_pdf_data.get("filepath")
+    if filepath and os.path.exists(filepath):
+        try:
+            doc = fitz.open(filepath)
+            try:
+                chapters = detect_chapters(doc)
+            finally:
+                doc.close()
+        except Exception as exc:
+            logger.warning("Chapter detection failed for %s: %s", filepath, exc)
+            chapters = []
+
+    global_pdf_data["chapters"] = chapters
+    return chapters
+
+
+def _estimate_range_chars(start_page: int, end_page: int) -> int:
+    """Estimate the text size of a page range without triggering OCR.
+
+    Cached OCR text is authoritative; otherwise the PDF's native text is a
+    free lower bound, and a page with neither is assumed to be an OCR-only
+    scan worth CHAPTER_OCR_PAGE_CHAR_ESTIMATE chars.
+    """
+    pages = global_pdf_data.get("pages") or {}
+    total = 0
+    unknown: list[int] = []
+    for page_index in range(start_page, end_page + 1):
+        cached = pages.get(page_index)
+        if cached:
+            total += len(cached)
+        else:
+            unknown.append(page_index)
+
+    if not unknown:
+        return total
+
+    filepath = global_pdf_data.get("filepath")
+    if not filepath or not os.path.exists(filepath):
+        return total + len(unknown) * CHAPTER_OCR_PAGE_CHAR_ESTIMATE
+
+    try:
+        doc = fitz.open(filepath)
+        try:
+            for page_index in unknown:
+                if 0 <= page_index < len(doc):
+                    native = len(doc[page_index].get_text().strip())
+                    total += native or CHAPTER_OCR_PAGE_CHAR_ESTIMATE
+        finally:
+            doc.close()
+    except Exception as exc:
+        logger.warning("Could not estimate chapter size: %s", exc)
+        return total + len(unknown) * CHAPTER_OCR_PAGE_CHAR_ESTIMATE
+
+    return total
+
+
+def _select_context_range(
+    center_page: int,
+    window: int,
+    total_pages: int,
+    *,
+    allow_chapter: bool = True,
+) -> tuple[int, int, Chapter | None]:
+    """Pick the page range to send as current-page context.
+
+    Prefers the whole chapter containing `center_page` when it fits the model
+    window; otherwise falls back to the +/- `window` slice, clamped to the
+    chapter so context never bleeds into a neighbouring topic.
+    """
+    fallback_start = max(0, center_page - window)
+    fallback_end = min(total_pages - 1, center_page + window)
+
+    if not (allow_chapter and CHAPTER_CONTEXT):
+        return fallback_start, fallback_end, None
+
+    chapter = chapter_for_page(_chapter_index(), center_page)
+    if chapter is None:
+        return fallback_start, fallback_end, None
+
+    reserved = PAGE_IMAGE_TOKEN_ESTIMATE if _page_image_enabled() else 0
+    budget = context_char_budget(
+        model_context_window=MODEL_CONTEXT_WINDOW,
+        safety_tokens=CONTEXT_SAFETY_TOKENS,
+        token_char_ratio=CONTEXT_TOKEN_CHAR_RATIO,
+        output_tokens=INFERENCE_MAX_TOKENS,
+        reserved_tokens=reserved,
+        overhead_chars=len(PromptManager.current_page_prompt("")),
+    )
+    estimated = _estimate_range_chars(chapter.start_page, chapter.end_page)
+    if estimated <= budget:
+        logger.info(
+            "Using chapter context '%s' (pages %s-%s, ~%s chars <= %s budget)",
+            chapter.title,
+            chapter.start_page + 1,
+            chapter.end_page + 1,
+            estimated,
+            budget,
+        )
+        return chapter.start_page, chapter.end_page, chapter
+
+    logger.info(
+        "Chapter '%s' too large for the window (~%s chars > %s budget); using +/-%s pages",
+        chapter.title,
+        estimated,
+        budget,
+        window,
+    )
+    return (
+        max(fallback_start, chapter.start_page),
+        min(fallback_end, chapter.end_page),
+        None,
+    )
+
+
 async def build_context(center_page: int, window: int = CONTEXT_WINDOW) -> str:
     global global_pdf_data
     total = global_pdf_data["total_pages"]
     if total == 0:
         return ""
-    
-    start_page = max(0, center_page - window)
-    end_page = min(total - 1, center_page + window)
+
+    start_page, end_page, chapter = _select_context_range(center_page, window, total)
     
     tasks = [extract_page_async(p) for p in range(start_page, end_page + 1)]
     results = await asyncio.gather(*tasks)
@@ -1030,8 +1165,14 @@ async def build_context(center_page: int, window: int = CONTEXT_WINDOW) -> str:
         p = start_page + i
         if text.strip():
             context_parts.append(f"--- Page {p + 1} ---\n{text.strip()}")
-            
-    return "\n\n".join(context_parts)
+
+    body = "\n\n".join(context_parts)
+    if chapter is not None and body:
+        return (
+            f"=== Full chapter: {chapter.title} "
+            f"(pages {chapter.start_page + 1}-{chapter.end_page + 1}) ===\n\n{body}"
+        )
+    return body
 
 
 async def _generate_structured_context(raw_text: str, label: str) -> str:
@@ -1073,10 +1214,20 @@ def _is_usable_structured_context(text: str) -> bool:
 
 
 async def _build_env_context(current_page: int) -> tuple[str, str]:
-    """Build raw +/- window context and paraphrased structured context."""
+    """Build the current-page context, and a paraphrase of it when useful.
+
+    When whole-chapter context is in play the extracted text is already the
+    authoritative source for the topic; paraphrasing it would cost an extra
+    inference call and pass through a 12k-char truncation, so the raw chapter
+    is returned as-is and the caller uses it directly.
+    """
+    total = global_pdf_data["total_pages"]
+    _start, _end, chapter = _select_context_range(current_page, CONTEXT_WINDOW, total)
     extracted_text = await build_context(current_page, window=CONTEXT_WINDOW)
     if not extracted_text.strip():
         return "", ""
+    if chapter is not None:
+        return "", extracted_text
     structured = await _generate_structured_context(extracted_text, label="current_page_window")
     return structured, extracted_text
 
@@ -1249,6 +1400,7 @@ async def ask_question(request: Request):
                     global_pdf_data["total_pages"] = book["total_pages"]
                     global_pdf_data["book_id"] = book_id
                     global_pdf_data["pages"] = {}
+                    global_pdf_data["chapters"] = None
                     global_pdf_data["page_images"] = {}
         if global_pdf_data["total_pages"] == 0:
             raise HTTPException(status_code=400, detail=ERR_NO_PDF_UPLOADED)
@@ -1298,7 +1450,7 @@ async def ask_question(request: Request):
         system_prompt = PromptManager.whole_book_prompt(file_context)
     else:
         system_prompt = PromptManager.current_page_prompt(file_context)
-        if MULTIMODAL_PAGE_CONTEXT and INFERENCE_PROVIDER == "ollama":
+        if _page_image_enabled():
             page_image_base64 = await asyncio.to_thread(
                 _render_page_image_base64,
                 current_page,
